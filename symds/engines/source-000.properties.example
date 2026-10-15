@@ -17,8 +17,8 @@ sync.url=http://sym-source:31415/sync/source-000
 auto.config.database=true
 # send initial load automatically once a node registers
 auto.reload=true
-# registration must be opened explicitly (symadmin open-registration)
-auto.registration=false
+# target nodes register themselves when they first connect (sym-target starts only after the config is loaded)
+auto.registration=true
 
 # faster demo cadence (defaults are 10000 ms)
 job.routing.period.time.ms=2000

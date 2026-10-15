@@ -1,9 +1,9 @@
 # SymmetricDS 3.16 Community — SQL Server → SQL Server POC (Phase 1 + 2)
 
-> **Running on Windows 11 / Docker Desktop? Follow [docs/LOCAL-SETUP-WINDOWS11.md](docs/LOCAL-SETUP-WINDOWS11.md)** (Linux/WSL2 only; step-by-step run, sync, test, monitor, troubleshooting).
+> **Windows 11 + Docker Desktop (nothing else to install): follow [docs/WINDOWS-DOCKER-DESKTOP.md](docs/WINDOWS-DOCKER-DESKTOP.md)**: double-click `start.bat`.
 
 AdventureWorksLT2022 restored twice on one SQL Server 2022 container (`AW_Source`, `AW_Target`).
-Two SymmetricDS 3.16.19 nodes (`source-000` registration server, `target-001`) replicate `SalesLT.*` + `dbo.ErrorLog`
+Two SymmetricDS 3.16 nodes (`jumpmind/symmetricds:3.16`) (`source-000` registration server, `target-001`) replicate `SalesLT.*` + `dbo.ErrorLog`
 one-way, source → target (push), over HTTP.
 
 ```
@@ -12,17 +12,19 @@ mssql (2022 Developer) ── AW_Source ◄─ sym-source :31415 ──push─�
 ```
 
 ## Run
+Windows: see the guide above (`start.bat`, `stop.bat`, `db-restore.bat`, `test.bat`, `test-error.bat`, `status.bat`, `reset.bat`).
+Linux/macOS (only Docker needed):
 ```bash
 cp .env.example .env            # change passwords
-# put AdventureWorksLT2022.bak in ./data/ (already copied here)
-# symds/engines/*.properties are generated from .env by scripts/up.sh
-scripts/up.sh                   # restore, start nodes, load config, register target, initial load, monitor
-scripts/status.sh               # quick status
-scripts/verify-parity.sh        # row-count + checksum per table, exit 1 on diff
-scripts/smoke-test.sh           # insert/update/delete incl. order+detail, waits for parity
-scripts/chaos-error.sh          # forces an error batch on the target, shows it blocks, then repairs
-scripts/reset.sh                # DESTROYS containers + volume
+cp /path/to/AdventureWorksLT2022.bak data/
+scripts/up.sh                   # docker compose up -d --build, then waits for parity (SKIP_MONITOR=1 skips the monitor build)
+scripts/smoke-test.sh           # insert/update/delete, waits for the target to match
+scripts/chaos-error.sh          # forces an error batch on the target, shows it blocks, repairs
+scripts/verify-parity.sh        # per-table row count + checksum
+scripts/status.sh  scripts/stop.sh  scripts/restore-db.sh  scripts/reset.sh
 ```
+All logic lives in `docker-compose.yml` (startup order) and `tools/` (runs inside a helper container), so the Windows `.bat`
+files and the Linux scripts are one-liners around `docker compose`.
 SQL Server is on `localhost:14330` (sa / `.env`). Read-only login for the Phase 2 UI: `monitor_ro`.
 
 ## Verified (2026-10-15, clean build)
@@ -40,7 +42,7 @@ SQL Server is on `localhost:14330` (sa / `.env`). Read-only login for the Phase 
    SymmetricDS only suppresses *its own* capture triggers. They are `DISABLE`d on the target (`mssql/02-prepare.sql`).
 3. **Table without primary key (`dbo.BuildVersion`)** → every reload appends duplicates. Excluded from sync; add a PK or leave out.
 4. **Image default command exits 129 on `docker restart`** (daemon wrapper + stale PID). Compose runs `/opt/symmetric-ds/bin/sym` in the foreground + `restart: unless-stopped`.
-5. **Registering the target before capture triggers exist → initial load of zero tables**, silently. `up.sh` waits for the 33 triggers first.
+5. **Registering the target before capture triggers exist → initial load of zero tables**, silently. The compose chain now starts `sym-target` only after the `sym-config` job has loaded the config and the 33 triggers exist.
 6. **`initial_load_select` with `ORDER BY` breaks the load.** SymmetricDS wraps it in `COUNT(*)`; the job throws and *no reload batches are created*, no obvious error in the console. Don't.
 7. **Repeated `reload-node` while live changes flow** wipes the target tables first; the in-flight batches then fail on FKs and 3.16's automatic *foreign-key correction* re-sends parent rows out of order (ProductCategory is self-referencing) → retry loop with ever-growing batch ids. Rule: one reload at a time, only when the channel is quiet; if stuck, reset target and reload once.
 8. **FK violations self-heal** (parent rows auto-reloaded), so they are a bad way to test error handling; a CHECK constraint is deterministic.

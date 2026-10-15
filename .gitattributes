@@ -9,4 +9,5 @@ Dockerfile text eol=lf
 *.js text eol=lf
 *.jsx text eol=lf
 *.bak binary
-*.bat text eol=crlf
+# Windows launchers must keep CRLF exactly as committed (cmd.exe breaks goto/labels with LF-only files)
+*.bat -text

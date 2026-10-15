@@ -1,9 +1,14 @@
 name: symds-poc
 
+# Startup chain (all automatic with `docker compose up -d`):
+#   mssql -> mssql-init (restore .bak twice) -> sym-source -> sym-config (load sync config) -> sym-target (registers + initial load)
+x-sqlserver: &sqlserver
+  image: mcr.microsoft.com/mssql/server:2022-latest
+  platform: linux/amd64
+
 services:
   mssql:
-    image: mcr.microsoft.com/mssql/server:2022-latest
-    platform: linux/amd64
+    <<: *sqlserver
     environment:
       ACCEPT_EULA: "Y"
       MSSQL_PID: Developer
@@ -20,10 +25,9 @@ services:
       retries: 30
       start_period: 20s
 
-  # one-shot: restore AdventureWorksLT2022 twice (AW_Source / AW_Target), create logins
+  # one-shot: restore AdventureWorksLT2022 twice (AW_Source / AW_Target), create logins. Idempotent.
   mssql-init:
-    image: mcr.microsoft.com/mssql/server:2022-latest
-    platform: linux/amd64
+    <<: *sqlserver
     depends_on:
       mssql: { condition: service_healthy }
     environment:
@@ -36,31 +40,47 @@ services:
     restart: "no"
 
   sym-source:
-    image: jumpmind/symmetricds:3.16.19
+    image: jumpmind/symmetricds:3.16
     depends_on:
       mssql-init: { condition: service_completed_successfully }
     ports: ["${SYM_SOURCE_PORT:-31415}:31415"]
-    # foreground launcher: the image default (sym_service daemon + tail) exits 129 on `docker restart` (stale PID file)
-    command: ["/opt/symmetric-ds/bin/sym"]
+    # the image has sh but no bash; start-node.sh renders the engine file from the template + env password, then runs sym
+    command: ["/bin/sh", "/symds/start-node.sh", "source-000"]
     restart: unless-stopped
     environment:
       JAVA_OPTS: "-Xmx1g"
+      SYMDS_DB_PASSWORD: ${SYMDS_DB_PASSWORD}
     volumes:
-      - ./symds/engines/source-000.properties:/opt/symmetric-ds/engines/source-000.properties:ro
+      - ./symds/start-node.sh:/symds/start-node.sh:ro
+      - ./symds/engines:/symds/engines:ro
+
+  # one-shot: load the sync configuration into AW_Source once the source node is up
+  sym-config:
+    <<: *sqlserver
+    depends_on:
+      sym-source: { condition: service_started }
+    environment:
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD}
+      FORCE: ${FORCE_CONFIG:-}
+    volumes:
+      - ./tools:/tools:ro
       - ./symds/config:/config:ro
+    entrypoint: ["/bin/bash", "/tools/load-config.sh"]
+    restart: "no"
 
   sym-target:
-    image: jumpmind/symmetricds:3.16.19
+    image: jumpmind/symmetricds:3.16
     depends_on:
-      - sym-source
+      sym-config: { condition: service_completed_successfully }
     ports: ["${SYM_TARGET_PORT:-31416}:31415"]
-    # foreground launcher: the image default (sym_service daemon + tail) exits 129 on `docker restart` (stale PID file)
-    command: ["/opt/symmetric-ds/bin/sym"]
+    command: ["/bin/sh", "/symds/start-node.sh", "target-001"]
     restart: unless-stopped
     environment:
       JAVA_OPTS: "-Xmx1g"
+      SYMDS_DB_PASSWORD: ${SYMDS_DB_PASSWORD}
     volumes:
-      - ./symds/engines/target-001.properties:/opt/symmetric-ds/engines/target-001.properties:ro
+      - ./symds/start-node.sh:/symds/start-node.sh:ro
+      - ./symds/engines:/symds/engines:ro
 
   monitor:
     build: ./monitor
@@ -72,6 +92,17 @@ services:
       MSSQL_HOST: mssql
       MONITOR_USER: monitor_ro            # read-only (db_datareader) on both databases
       MONITOR_RO_PASSWORD: ${MONITOR_RO_PASSWORD}
+
+  # helper container for tests/maintenance:  docker compose run --rm tools <parity|smoke|chaos|chaos-repair|status|wait-parity|drop-dbs>
+  tools:
+    <<: *sqlserver
+    profiles: ["tools"]
+    environment:
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD}
+    volumes:
+      - ./tools:/tools:ro
+      - ./symds/config:/config:ro
+    entrypoint: ["/bin/bash", "/tools/run.sh"]
 
 volumes:
   mssql-data:
