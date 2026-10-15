@@ -27,6 +27,8 @@ docker version        # shows Client AND Server; if Server is missing, Docker De
 docker compose version
 git --version
 ```
+> **Docker Desktop running is not enough.** Docker Desktop only creates its own internal `docker-desktop` distro. You also need a real Linux distro (Ubuntu) installed *and* enabled under Docker Desktop → Settings → Resources → WSL integration. Check with `wsl -l -v` in PowerShell: you should see `Ubuntu` (State Running/Stopped, Version 2).
+
 **Work inside the Linux filesystem** (`~/`), not `/mnt/c/...`: it is much faster, and a checkout from Windows
 git may convert line endings to CRLF, which breaks the shell scripts inside containers
 (`bad interpreter: /bin/bash^M`).
@@ -135,7 +137,7 @@ docker compose logs -f monitor
 | `windows\status.bat` | `scripts/status.sh` |
 
 Setup: copy the `windows` folder out of WSL to e.g. `C:\symds\` (in Explorer open `\\wsl$\Ubuntu\home\<linux-user>\symmetricdsui\windows`),
-then edit `config.bat`: `DISTRO` (see `wsl -l -q`) and `REPO` (default `~/symmetricdsui`). Keep all the files in that folder together.
+then edit `config.bat`: `DISTRO` (leave empty to use your default WSL distro, or the exact name from `wsl -l -v`, e.g. `Ubuntu-22.04`) and `REPO` (default `~/symmetricdsui`). Keep all the files in that folder together.
 The `.bat` files are not required: the same actions from the Ubuntu terminal are:
 ```bash
 scripts/stop.sh                # stop, keep data
@@ -149,6 +151,8 @@ After a reboot Docker Desktop restarts the containers by itself (SymmetricDS has
 ## 8. Troubleshooting
 | Symptom | Cause / fix |
 |---|---|
+| `WSL_E_DISTRO_NOT_FOUND` / "There is no distribution with the supplied name" when running a `.bat` | No Ubuntu in WSL, or its name differs from `DISTRO` in `windows\config.bat`. PowerShell: `wsl -l -v`. Only `docker-desktop` listed → `wsl --install -d Ubuntu`, reboot, create the Linux user, enable it in Docker Desktop → WSL integration. Ubuntu listed under another name (e.g. `Ubuntu-22.04`) → set `DISTRO` to that exact name, or leave it empty to use the default distro (the one marked `*`) |
+| `.bat` says "project not found at ~/symmetricdsui" | Clone inside Ubuntu (section 2) or set `REPO` in `config.bat` |
 | `Cannot connect to the Docker daemon` / `docker: command not found` in Ubuntu | Start Docker Desktop; enable WSL integration for Ubuntu (section 1); `wsl --shutdown` and retry |
 | `/bin/bash^M: bad interpreter` or `$'\r': command not found` | Repo was checked out with Windows line endings. Re-clone **inside WSL** (`~/`), not under `/mnt/c` |
 | `mssql` unhealthy / exits | Not enough memory: raise `.wslconfig` memory (≥ 6 GB) and `wsl --shutdown`. Check `docker compose logs mssql` (password complexity, EULA) |
