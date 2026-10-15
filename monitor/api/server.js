@@ -4,7 +4,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { q, dbNames } from './db.js';
+import { q as dq, seedDemo, testConnection, dropPool, cfgFor, explain } from './db.js';
+import { listConnections, getConnection, upsertConnection, deleteConnection, listPairs, getPair, savePair, newPairId, audit } from './store.js';
+import { login, logout, sessionOf, guard, authConfigured } from './auth.js';
+import { listTables, loadOrder, compareSchema, userTriggers } from './discovery.js';
+import { computeParity } from './parity.js';
+import { precheck, startApply, pause, resume, reload, remove, engineFilesPresent, recoverInterrupted } from './wizard.js';
 
 const app = Fastify({ logger: { level: 'warn' } });
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -15,8 +20,19 @@ const BACKLOG_WARN = Number(process.env.BACKLOG_WARN || 20);
 const STATUS_ORDER = ['NE', 'RT', 'QY', 'SE', 'LD', 'RQ', 'ER', 'IG', 'OK'];
 // Per-request error collector: a failing query degrades to its fallback (arrays stay arrays) and is reported in `errors`.
 const als = new AsyncLocalStorage();
-app.addHook('onRequest', (req, reply, done) => als.run({ errors: [] }, done));
+app.addHook('onRequest', (req, reply, done) => {
+  const pairId = new URL(req.url, 'http://x').searchParams.get('pair') || 'demo';
+  als.run({ errors: [], pairId }, () => guard(req, reply, done));
+});
+const pairIdNow = () => als.getStore()?.pairId || 'demo';
+// q('source'|'target', sql, params): runs on the connection of the pair selected with ?pair= (default: the built-in demo)
+const q = (side, text, params) => {
+  const p = getPair(pairIdNow());
+  if (!p) throw Object.assign(new Error(`Unknown sync "${pairIdNow()}"`), { statusCode: 404 });
+  return dq(side === 'source' ? p.sourceConnId : p.targetConnId, text, params);
+};
 const errorsNow = () => als.getStore()?.errors ?? [];
+const PARITY_TTL = 10000;
 const safe = async (fn, fallback) => {
   try { return await fn(); }
   catch (e) { const st = als.getStore(); if (st && !st.errors.includes(e.message)) st.errors.push(e.message); return fallback; }
@@ -25,8 +41,8 @@ const safe = async (fn, fallback) => {
 app.setErrorHandler((err, req, reply) => reply.code(err.statusCode && err.statusCode < 500 ? err.statusCode : 503).send({ error: err.message }));
 
 app.get('/api/health', async () => ({
-  source: await q('source', 'SELECT 1 AS ok').then(() => 'up').catch((e) => 'down: ' + e.message),
-  target: await q('target', 'SELECT 1 AS ok').then(() => 'up').catch((e) => 'down: ' + e.message),
+  source: await q('source', 'SELECT 1 AS ok').then(() => 'up').catch((e) => 'down: ' + explain(e)),
+  target: await q('target', 'SELECT 1 AS ok').then(() => 'up').catch((e) => 'down: ' + explain(e)),
 }));
 
 app.get('/api/overview', async () => {
@@ -123,38 +139,33 @@ app.get('/api/config', async () => ({
       FROM sym_trigger t LEFT JOIN sym_trigger_router tr ON tr.trigger_id=t.trigger_id ORDER BY tr.initial_load_order, t.trigger_id`),
 }));
 
-// Row count + checksum per replicated table, both sides. Cached 10s: checksums scan the tables.
-let parityCache = { at: 0, data: null };
+// Row count + checksum per replicated table, both sides. Cached 10s per sync: checksums scan the tables.
+const parityCache = new Map();
 app.get('/api/parity', async (req) => {
-  if (!req.query.fresh && Date.now() - parityCache.at < 10000 && parityCache.data) return parityCache.data;
-  const tables = await q('source', `SELECT DISTINCT source_schema_name s, source_table_name n FROM sym_trigger t JOIN sym_trigger_router r ON r.trigger_id=t.trigger_id WHERE r.enabled=1 ORDER BY 1,2`);
-  const rows = [];
-  for (const { s, n } of tables) {
-    if (!/^[\w]+$/.test(s) || !/^[\w]+$/.test(n)) continue; // identifiers come from config; still validate before interpolating
-    const t = `[${s}].[${n}]`;
-    const stat = `SELECT COUNT_BIG(*) c, CHECKSUM_AGG(BINARY_CHECKSUM(*)) k FROM ${t}`;
-    const [a, b] = await Promise.all([safe(() => q('source', stat), [{}]), safe(() => q('target', stat), [{}])]);
-    const sc = Number(a[0]?.c ?? -1), tc = Number(b[0]?.c ?? -1);
-    rows.push({ table: `${s}.${n}`, source_rows: sc, target_rows: tc, match: sc === tc && (a[0]?.k ?? 0) === (b[0]?.k ?? 0), count_match: sc === tc });
-  }
-  parityCache = { at: Date.now(), data: { checked_at: new Date().toISOString(), tables: rows, in_sync: rows.every((r) => r.match) } };
-  return parityCache.data;
+  const id = pairIdNow(); const c = parityCache.get(id);
+  if (!req.query.fresh && c && Date.now() - c.at < PARITY_TTL) return c.data;
+  const p = getPair(id);
+  if (!p) throw Object.assign(new Error('Unknown sync'), { statusCode: 404 });
+  const data = await computeParity(p.sourceConnId, p.targetConnId);
+  parityCache.set(id, { at: Date.now(), data });
+  return data;
 });
 
-app.get('/api/alerts', async () => {
+const inner = (req, url) => app.inject({ url: `${url}${url.includes('?') ? '&' : '?'}pair=${encodeURIComponent(pairIdNow())}`, headers: { cookie: req.headers.cookie || '' } }).then((r) => r.json());
+app.get('/api/alerts', async (req) => {
   const alerts = [];
-  const ov = await app.inject({ url: '/api/overview' }).then((r) => r.json());
+  const ov = await inner(req, '/api/overview');
   for (const n of ov.nodes || []) {
     if (n.heartbeat_age_sec != null && n.heartbeat_age_sec > STALE_HEARTBEAT_MIN * 60)
       alerts.push({ severity: 'warning', kind: 'stale_heartbeat', message: `Node ${n.node_id} heartbeat is ${Math.round(n.heartbeat_age_sec / 60)} min old` });
     if (!n.sync_enabled) alerts.push({ severity: 'warning', kind: 'node_disabled', message: `Node ${n.node_id} sync disabled` });
   }
   for (const m of ov.errors || []) alerts.push({ severity: 'critical', kind: 'monitor_query', message: 'Database read failed: ' + m });
-  const errs = await app.inject({ url: '/api/errors' }).then((r) => r.json());
+  const errs = await inner(req, '/api/errors');
   for (const e of Array.isArray(errs.outgoing) ? errs.outgoing : []) alerts.push({ severity: 'critical', kind: 'batch_error', message: `Batch ${e.batch_id} (${e.channel_id}) → node ${e.node_id}: ${(e.sql_message || '').slice(0, 200)}` });
   if (ov.backlog > BACKLOG_WARN) alerts.push({ severity: 'warning', kind: 'backlog', message: `Backlog of ${ov.backlog} batches not yet loaded` });
-  const par = await app.inject({ url: '/api/parity' }).then((r) => r.json());
-  for (const t of Array.isArray(par.tables) ? par.tables : []) if (!t.match && ov.backlog === 0) alerts.push({ severity: 'warning', kind: 'parity', message: `${t.table}: source ${t.source_rows} vs target ${t.target_rows} rows with no backlog` });
+  const par = await inner(req, '/api/parity');
+  for (const t of Array.isArray(par?.tables) ? par.tables : []) if (!t.match && ov.backlog === 0) alerts.push({ severity: 'warning', kind: 'parity', message: `${t.table}: source ${t.source_rows} vs target ${t.target_rows} rows with no backlog` });
   return alerts;
 });
 
@@ -179,7 +190,84 @@ app.get('/api/feed', (req, reply) => {
   req.raw.on('close', () => { closed = true; });
 });
 
-app.get('/api/meta', async () => ({ source_db: dbNames.source, target_db: dbNames.target, write_actions: false }));
+// ================= sign-in =================
+app.get('/api/session', async (req) => { const u = sessionOf(req); return { authenticated: !!u, user: u?.user || null, configured: authConfigured() }; });
+app.post('/api/login', (req, reply) => login(req, reply));
+app.post('/api/logout', (req, reply) => logout(req, reply));
+
+// ================= connections =================
+const connLabel = (id) => getConnection(id)?.name || id;
+const pairView = (p) => ({
+  id: p.id, name: p.name, system: !!p.system, state: p.state, error: p.error || null, steps: p.steps || [], tables: p.tables || [],
+  sourceConnId: p.sourceConnId, targetConnId: p.targetConnId, sourceName: connLabel(p.sourceConnId), targetName: connLabel(p.targetConnId),
+  options: p.options || {}, createdAt: p.createdAt, lastAppliedAt: p.lastAppliedAt || null, engines: p.system ? null : engineFilesPresent(p),
+});
+app.get('/api/meta', async () => ({ write_actions: true, auth: authConfigured() }));
+app.get('/api/connections', async () => listConnections());
+app.post('/api/connections', async (req) => {
+  const c = upsertConnection(req.body || {}, req.user); dropPool(c.id); return c;
+});
+app.delete('/api/connections/:id', async (req) => { deleteConnection(req.params.id, req.user); dropPool(req.params.id); return { ok: true }; });
+// test either a saved connection (id, blank password = reuse the stored one) or form values that are not saved yet
+app.post('/api/connections/test', async (req) => {
+  const b = req.body || {};
+  const saved = b.id && getConnection(b.id) ? cfgFor(b.id) : {};
+  const cfg = { host: b.host ?? saved.host, port: Number(b.port ?? saved.port ?? 1433), database: b.database ?? saved.database, user: b.user ?? saved.user,
+                password: b.password || saved.password || '', encrypt: b.encrypt ?? saved.encrypt ?? true, trustCert: b.trustCert ?? saved.trustCert ?? true };
+  if (!cfg.host || !cfg.database || !cfg.user) return { ok: false, error: 'Host, database and user are required' };
+  if (!/^[A-Za-z0-9._-]+$/.test(cfg.host)) return { ok: false, error: 'Host may only contain letters, digits, dot, dash, underscore' };
+  return testConnection(cfg);
+});
+app.get('/api/connections/:id/tables', async (req) => { if (!getConnection(req.params.id)) throw Object.assign(new Error('Unknown connection'), { statusCode: 404 }); return listTables(req.params.id); });
+
+// ================= sync pairs =================
+app.get('/api/pairs', async () => listPairs().filter((p) => p.state !== 'removed').map(pairView));
+app.get('/api/pairs/:id', async (req) => { const p = getPair(req.params.id); if (!p) throw Object.assign(new Error('Unknown sync'), { statusCode: 404 }); return pairView(p); });
+app.post('/api/pairs/precheck', async (req) => precheck(req.body || {}));
+app.post('/api/pairs/schema-check', async (req) => {
+  const { sourceConnId, targetConnId, tables = [] } = req.body || {};
+  if (!getConnection(sourceConnId) || !getConnection(targetConnId)) throw Object.assign(new Error('Choose source and target'), { statusCode: 400 });
+  const ordered = await loadOrder(sourceConnId, tables);
+  return { order: ordered, schema: await compareSchema(sourceConnId, targetConnId, ordered), targetTriggers: await userTriggers(targetConnId, ordered) };
+});
+app.post('/api/pairs', async (req) => {
+  const b = req.body || {};
+  const name = String(b.name || '').trim();
+  if (!name) throw Object.assign(new Error('Give the sync a name'), { statusCode: 400 });
+  if (listPairs().some((p) => p.name.toLowerCase() === name.toLowerCase() && p.state !== 'removed')) throw Object.assign(new Error(`A sync named "${name}" already exists`), { statusCode: 400 });
+  const chk = await precheck(b);
+  if (!chk.ok) throw Object.assign(new Error(chk.problems.join(' | ')), { statusCode: 400 });
+  const avail = new Map((await listTables(b.sourceConnId)).map((t) => [t.name, t]));
+  const tables = [...new Set(b.tables || [])];
+  if (!tables.length) throw Object.assign(new Error('Select at least one table'), { statusCode: 400 });
+  for (const t of tables) {
+    const info = avail.get(t);
+    if (!info) throw Object.assign(new Error(`Table ${t} not found in the source database`), { statusCode: 400 });
+    if (info.blocked.length) throw Object.assign(new Error(`Table ${t} cannot be synced: ${info.blocked.join('; ')}`), { statusCode: 400 });
+  }
+  const pair = savePair({ id: newPairId(name), name, sourceConnId: b.sourceConnId, targetConnId: b.targetConnId, tables, state: 'draft', steps: [],
+    options: { createMissing: !!b.options?.createMissing, disableTargetTriggers: b.options?.disableTargetTriggers !== false, enableRcsi: !!b.options?.enableRcsi }, createdAt: new Date().toISOString() });
+  audit(req.user, 'sync.create', { id: pair.id, name, tables: tables.length });
+  startApply(pair, req.user);
+  return pairView(pair);
+});
+const own = (req) => { const p = getPair(req.params.id); if (!p) throw Object.assign(new Error('Unknown sync'), { statusCode: 404 }); if (p.system) throw Object.assign(new Error('The built-in demo sync is managed by docker compose and cannot be changed here'), { statusCode: 400 }); return p; };
+app.post('/api/pairs/:id/apply', async (req) => { const p = own(req); audit(req.user, 'sync.apply', { id: p.id }); startApply(p, req.user); return pairView(p); });
+app.post('/api/pairs/:id/pause', async (req) => { const p = own(req); pause(p); audit(req.user, 'sync.pause', { id: p.id }); return pairView(p); });
+app.post('/api/pairs/:id/resume', async (req) => { const p = own(req); resume(p); audit(req.user, 'sync.resume', { id: p.id }); return pairView(p); });
+app.post('/api/pairs/:id/reload', async (req) => { const p = own(req); await reload(p); audit(req.user, 'sync.reload', { id: p.id }); return { ok: true }; });
+app.delete('/api/pairs/:id', async (req) => {
+  const p = own(req); const uninstall = req.query.uninstall === '1';
+  const log = await remove(p, { uninstall }); p.state = 'removed'; savePair(p); parityCache.delete(p.id);
+  audit(req.user, 'sync.remove', { id: p.id, uninstall }); return { ok: true, log };
+});
+
+// ================= startup =================
+seedDemo();
+if (!getPair('demo')) savePair({ id: 'demo', name: 'Demo (AdventureWorksLT, docker compose)', system: true, sourceConnId: 'demo-source', targetConnId: 'demo-target', tables: [], state: 'running', steps: [], options: {}, createdAt: new Date().toISOString() });
+recoverInterrupted();
+if (!authConfigured()) console.warn('WARNING: MONITOR_ADMIN_PASSWORD is not set - sign-in is disabled and the UI cannot be used. Set it in .env');
+
 
 const webDir = path.join(here, 'public');
 if (fs.existsSync(webDir)) {

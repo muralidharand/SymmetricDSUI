@@ -21,3 +21,16 @@ button.btn{cursor:pointer}pre{margin:6px 0 0;white-space:pre-wrap;word-break:bre
 .dot{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:6px}.dot.ok{background:var(--ok)}.dot.bad{background:var(--bad)}.dot.warn{background:var(--warn)}
 .feed{font-family:ui-monospace,Menlo,monospace;font-size:12px;max-height:520px;overflow:auto}.feed div{padding:3px 0;border-bottom:1px solid var(--line)}
 .err{color:var(--bad)}@media(max-width:640px){main{padding:12px 16px}header{padding:10px 16px}}
+/* ---- sign-in, forms, wizard ---- */
+.login{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px}.login .card{width:100%;max-width:380px;display:grid;gap:12px}.login h2{margin:0}
+label{display:grid;gap:4px;font-size:12px;color:var(--muted);font-weight:600}label input,label select{font-weight:400;font-size:14px;color:var(--text)}
+.form{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));margin:8px 0}
+label.chk{display:flex;gap:8px;align-items:flex-start;font-weight:400;color:var(--text);font-size:13px;margin:8px 0}label.chk input{margin-top:3px}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}.btn:disabled{opacity:.5;cursor:not-allowed}
+.alert.ok{background:var(--okbg);border-color:var(--ok)}.dim{opacity:.55}
+.wiz-head{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}.wiz-step{padding:4px 10px;border-radius:99px;background:var(--bg);color:var(--muted);font-size:12px;font-weight:600}
+.wiz-step.on{background:var(--accent);color:#fff}.wiz-step.done{color:var(--ok)}
+ol.steps{list-style:none;padding:0;margin:12px 0}ol.steps li{display:flex;gap:10px;padding:6px 0;border-bottom:1px solid var(--line)}
+ol.steps .ic{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;background:var(--bg);flex:none}
+.st-ok .ic{background:var(--okbg);color:var(--ok)}.st-error .ic{background:var(--badbg);color:var(--bad)}.st-running .ic{background:var(--warnbg);color:var(--warn)}
+details pre{max-height:220px;overflow:auto}header .pairsel{max-width:260px}

@@ -11,6 +11,7 @@ COPY api/package.json ./
 RUN npm install --omit=dev --no-audit --no-fund
 COPY api/ ./
 COPY --from=web /web/dist ./public
+RUN mkdir -p /data /runtime/engines && chown -R node:node /data /runtime
 USER node
 EXPOSE 8080
 CMD ["node", "server.js"]

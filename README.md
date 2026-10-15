@@ -78,3 +78,16 @@ Phase 2 findings:
 - `sym_node.batch_to_send_count` etc. are `-1` until computed; shown as blank.
 - Latency excludes the `reload` channel (bulk loads would skew it).
 - Not built: write actions (retry/ignore batch, request reload). The API is deliberately read-only (`/api/meta` → `write_actions:false`); add them behind a separate login + audit log if wanted.
+
+---
+# Phase 2b: sync any SQL Server database from the UI
+The monitor now has **Connections** (save source/target databases, test them) and **Sync jobs** (a wizard that creates the sync with SymmetricDS:
+pick tables, create missing target tables, start, initial load, monitor). A **Sync** selector in the header points every monitor page at the chosen sync.
+Sign-in is required (`MONITOR_ADMIN_USER/PASSWORD` in `.env`). Guide, limits and security notes: [docs/ADD-YOUR-OWN-DATABASE.md](docs/ADD-YOUR-OWN-DATABASE.md).
+
+Design notes / lessons from building it:
+- SymmetricDS reads engine files only at startup: the UI writes `<engine>.properties` into a shared volume and a small supervisor (`symds/runtime-supervisor.sh`) in `sym-runtime` restarts the server when they change (no docker.sock needed).
+- **Race:** config written to the source database before SymmetricDS has created the capture triggers on its *own* config tables is not captured, so it never creates triggers on your tables and the sync stalls silently. The wizard (and `tools/load-config.sh`) now wait for those triggers first, and nudge once if needed.
+- The target node is started only after the config and capture triggers exist (registering earlier gives an empty initial load).
+- Business triggers on target tables must be disabled (the wizard offers it and re-enables them on uninstall).
+- A failed query used to return an object where the UI expected a list and crash the page: the API now always returns lists plus an `errors` array.

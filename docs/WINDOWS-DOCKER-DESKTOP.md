@@ -26,6 +26,7 @@ collide with common ones:
 | Service | Port on your PC | `.env` variable | Typical clash it avoids |
 |---|---|---|---|
 | SQL Server | **14330** | `MSSQL_PORT` | 1433 |
+| SymmetricDS for UI-created syncs | **41417** | `RUNTIME_PORT` | 31415 |
 | SymmetricDS source node | **41415** | `SYM_SOURCE_PORT` | 31415 |
 | SymmetricDS target node | **41416** | `SYM_TARGET_PORT` | 31416 |
 | Monitor UI | **18080** | `MONITOR_PORT` | 8080 |
@@ -54,7 +55,7 @@ Double-click **`start.bat`**. First run takes about 10 minutes (downloads), late
 | `sym-source` | SymmetricDS node 000 starts and creates its `sym_*` tables inside `AW_Source` |
 | `sym-config` | loads `symds/config/sym-config.sql` (what is replicated, channel, router, triggers) and waits for the capture triggers |
 | `sym-target` | node 001 starts **after** the config is ready, registers automatically and receives the **initial load** |
-| `monitor` | UI starts |
+| `monitor` + `sym-runtime` | UI starts (port 18080, this PC only); `sym-runtime` is the SymmetricDS server for syncs you create in the UI |
 | `wait-parity` | waits until every table is identical, prints the per-table counts and `PARITY: all tables match` |
 
 Then your browser opens **http://localhost:18080**. From now on every change committed in `AW_Source` is captured by triggers and
@@ -82,8 +83,13 @@ target are **not** sent back.
 | `docker compose stop sym-target`, change data, `docker compose start sym-target` | monitor shows a backlog, then it drains; nothing lost |
 | `stop.bat` then `start.bat` | resumes, replicated data kept |
 
-## 5. Monitor
-**http://localhost:18080** (read-only UI):
+## 5. Use your own databases (optional)
+In the monitor, **Connections** saves a source and a target database, and **Sync jobs → New sync** sets up SymmetricDS between them (pick tables,
+let it create missing target tables, watch the progress). Run **`sample-databases.bat`** first if you just want to try it with two sample databases.
+Full guide: [ADD-YOUR-OWN-DATABASE.md](ADD-YOUR-OWN-DATABASE.md). A SQL Server on this Windows PC is reached as host `host.docker.internal`.
+
+## 6. Monitor
+**http://localhost:18080**. Sign in with user `admin` and the password `MONITOR_ADMIN_PASSWORD` from `.env` (default in `.env.example`; change it). The **Sync** selector in the header chooses which sync every page shows:
 | Page | Use it to |
 |---|---|
 | Overview | alerts, *Backlog* (batches not yet loaded), *Errors*, latency avg/p95/max, rows per minute, node health |
@@ -98,7 +104,7 @@ A failing batch is `LD` + message on the source side and `ER` on the target side
 
 Logs: `docker compose logs -f sym-source sym-target` (Ctrl-C to stop watching) or use Docker Desktop → Containers.
 
-## 6. Stop, restore the databases, reset
+## 7. Stop, restore the databases, reset
 | File | Does |
 |---|---|
 | **`stop.bat`** | stops all containers, **keeps all data** |
@@ -107,7 +113,7 @@ Logs: `docker compose logs -f sym-source sym-target` (Ctrl-C to stop watching) o
 | **`reset.bat`** | asks `YES`, removes all containers **and the SQL Server volume** (everything). Next `start.bat` rebuilds from scratch. Needed after changing passwords |
 Docker Desktop restarts the containers automatically after a reboot (SymmetricDS has `restart: unless-stopped`).
 
-## 7. Troubleshooting
+## 8. Troubleshooting
 | Symptom | Fix |
 |---|---|
 | `Docker is not running` / start.bat waits long | Start Docker Desktop and wait for *Engine running*; start.bat also tries to start it |
@@ -125,7 +131,7 @@ Docker Desktop restarts the containers automatically after a reboot (SymmetricDS
 | Changed a password after the first start | `reset.bat`, then `start.bat` |
 | A `.sh` file edited in Notepad stops working | Shell/SQL files must keep Unix (LF) line endings: edit with VS Code/Notepad++ set to LF, or do not edit them |
 
-## 8. What is where
+## 9. What is where
 `docker-compose.yml` services and startup order · `mssql/` restore + logins · `symds/config/sym-config.sql` what is replicated ·
 `symds/engines/*.properties.example` node settings (password injected from `.env`) · `tools/` scripts that run **inside** a helper container ·
 `monitor/` UI + API · `*.bat` Windows launchers · `scripts/*.sh` the same actions for Linux/macOS users · `README.md` design notes and lessons learned.

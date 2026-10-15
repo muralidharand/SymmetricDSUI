@@ -82,16 +82,49 @@ services:
       - ./symds/start-node.sh:/symds/start-node.sh:ro
       - ./symds/engines:/symds/engines:ro
 
+  # SymmetricDS server for sync pairs created in the monitor UI ("Sync jobs" > New sync). Idle until the UI writes engine files.
+  sym-runtime:
+    image: jumpmind/symmetricds:3.16
+    command: ["/bin/sh", "/symds/runtime-supervisor.sh"]
+    restart: unless-stopped
+    ports: ["${RUNTIME_PORT:-41417}:31415"]
+    environment:
+      JAVA_OPTS: "-Xmx1g"
+    volumes:
+      - ./symds/runtime-supervisor.sh:/symds/runtime-supervisor.sh:ro
+      - runtime-engines:/opt/symmetric-ds/engines
+
   monitor:
     build: ./monitor
     depends_on:
       mssql-init: { condition: service_completed_successfully }
-    ports: ["${MONITOR_PORT:-18080}:8080"]
+    # bound to this PC only by default: the UI can write to databases. Set MONITOR_BIND=0.0.0.0 to expose it deliberately.
+    ports: ["${MONITOR_BIND:-127.0.0.1}:${MONITOR_PORT:-18080}:8080"]
     restart: unless-stopped
     environment:
       MSSQL_HOST: mssql
-      MONITOR_USER: monitor_ro            # read-only (db_datareader) on both databases
+      MONITOR_USER: monitor_ro            # read-only login used for the built-in "demo" pair
       MONITOR_RO_PASSWORD: ${MONITOR_RO_PASSWORD}
+      MONITOR_ADMIN_USER: ${MONITOR_ADMIN_USER:-admin}
+      MONITOR_ADMIN_PASSWORD: ${MONITOR_ADMIN_PASSWORD}
+      MONITOR_SECRET: ${MONITOR_SECRET:-}
+      RUNTIME_ENGINES_DIR: /runtime/engines
+      RUNTIME_SYNC_HOST: sym-runtime
+    volumes:
+      - monitor-data:/data                 # saved connections (passwords encrypted), sync pairs, audit log
+      - runtime-engines:/runtime/engines   # engine files for sym-runtime
+
+  # optional second SQL Server instance to try syncing between two servers: docker compose --profile extra-sql up -d mssql2
+  mssql2:
+    <<: *sqlserver
+    profiles: ["extra-sql"]
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: Developer
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD}
+    stop_grace_period: 60s
+    volumes:
+      - mssql2-data:/var/opt/mssql
 
   # helper container for tests/maintenance:  docker compose run --rm tools <parity|smoke|chaos|chaos-repair|status|wait-parity|drop-dbs>
   tools:
@@ -106,3 +139,6 @@ services:
 
 volumes:
   mssql-data:
+  mssql2-data:
+  monitor-data:
+  runtime-engines:

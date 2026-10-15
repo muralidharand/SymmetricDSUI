@@ -1,18 +1,11 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, CartesianGrid, LineChart, Line } from 'recharts';
 
-const get = (u) => fetch(u).then(async (r) => {
-  if (r.ok) return r.json();
-  let msg = `${r.status}`; try { const b = await r.json(); if (b.error) msg = b.error; } catch { /* not json */ }
-  throw new Error(`${u.split('?')[0]}: ${msg}`);
-});
-const arr = (x) => (Array.isArray(x) ? x : []);
-function useApi(url, ms = 5000) {
-  const [data, setData] = useState(null); const [err, setErr] = useState(null);
-  const load = useCallback(() => get(url).then((d) => { setData(d); setErr(null); }).catch(setErr), [url]);
-  useEffect(() => { load(); const t = setInterval(load, ms); return () => clearInterval(t); }, [load, ms]);
-  return { data, err, reload: load };
-}
+import { PairCtx, usePair, useApi, get, send, arr } from './api.js';
+import Login from './Login.jsx';
+import Connections from './Connections.jsx';
+import SyncJobs from './SyncJobs.jsx';
+
 const fmtMs = (n) => (n == null ? '–' : n < 1000 ? `${Math.round(n)} ms` : `${(n / 1000).toFixed(1)} s`);
 const fmtT = (s) => (s ? new Date(s).toLocaleTimeString() : '–');
 const fmtB = (n) => (n == null ? '–' : n < 1024 ? `${n} B` : `${(n / 1024).toFixed(1)} KB`);
@@ -112,13 +105,14 @@ function Channels() {
 }
 
 function Feed() {
+  const pair = usePair();
   const [items, setItems] = useState([]); const [live, setLive] = useState(true); const [problem, setProblem] = useState(null);
   useEffect(() => {
-    if (!live) return; const es = new EventSource('/api/feed');
+    if (!live) return; setItems([]); const es = new EventSource(`/api/feed?pair=${encodeURIComponent(pair)}`);
     es.onmessage = (m) => setItems((p) => [JSON.parse(m.data), ...p].slice(0, 300));
     es.addEventListener('problem', (m) => setProblem(m.data)); es.onerror = () => setProblem('connection lost, retrying…'); es.onopen = () => setProblem(null);
     return () => es.close();
-  }, [live]);
+  }, [live, pair]);
   const tone = { I: 'ok', U: 'warn', D: 'bad', R: 'mute' };
   return <><div className="row"><button className="btn" onClick={() => setLive(!live)}>{live ? 'Pause' : 'Resume'}</button><button className="btn" onClick={() => setItems([])}>Clear</button>{problem && <span className="err">{problem}</span>}<span className="sub">changes captured on the source after you opened this page (I insert, U update, D delete, R reload)</span></div>
     <div className="card feed">{items.length === 0 && <div className="sub">Waiting for changes… run scripts/smoke-test.sh</div>}
@@ -136,19 +130,50 @@ class Boundary extends React.Component {
   }
 }
 
-const TABS = { Overview, Batches, Errors, Parity, 'Channels & routing': Channels, 'Live feed': Feed };
-export default function App() {
-  const [tab, setTab] = useState(localStorage.getItem('tab') || 'Overview'); const meta = useApi('/api/meta', 60000); const health = useApi('/api/health', 10000);
-  const Tab = TABS[tab] || Overview; const up = (s) => s === 'up';
+const MONITOR_TABS = { Overview, Batches, Errors, Parity, 'Channels & routing': Channels, 'Live feed': Feed };
+const ALL_TABS = ['Overview', 'Batches', 'Errors', 'Parity', 'Channels & routing', 'Live feed', 'Sync jobs', 'Connections'];
+
+function Shell({ session, onSignedOut }) {
+  const [tab, setTab] = useState(() => { try { return ALL_TABS.includes(localStorage.getItem('tab')) ? localStorage.getItem('tab') : 'Overview'; } catch { return 'Overview'; } });
+  const [pair, setPair] = useState(() => { try { return localStorage.getItem('pair') || 'demo'; } catch { return 'demo'; } });
+  const { data: pairs } = useApi('/api/pairs', 5000, { scoped: false });
+  const go = (t) => { setTab(t); try { localStorage.setItem('tab', t); } catch { /* storage unavailable */ } };
+  const pick = (id) => { setPair(id); try { localStorage.setItem('pair', id); } catch { /* ignore */ } };
+  useEffect(() => { if (pairs && !arr(pairs).some((p) => p.id === pair)) pick('demo'); }, [pairs]); // eslint-disable-line
+  return <PairCtx.Provider value={pair}><ShellBody tab={tab} go={go} pair={pair} pick={pick} pairs={arr(pairs)} session={session} onSignedOut={onSignedOut} /></PairCtx.Provider>;
+}
+
+function ShellBody({ tab, go, pair, pick, pairs, session, onSignedOut }) {
+  const health = useApi('/api/health', 10000);
+  const up = (s) => s === 'up';
+  const monitorTab = MONITOR_TABS[tab];
+  const cur = pairs.find((p) => p.id === pair);
   return <><header><h1>SymmetricDS Monitor</h1>
-    <nav>{Object.keys(TABS).map((t) => <button key={t} className={t === tab ? 'on' : ''} onClick={() => { setTab(t); try { localStorage.setItem('tab', t); } catch {} }}>{t}</button>)}</nav>
+    <nav>{ALL_TABS.map((t) => <button key={t} className={t === tab ? 'on' : ''} onClick={() => go(t)}>{t}</button>)}</nav>
     <span className="sp" />
-    <span className="sub"><span className={`dot ${up(health.data?.source) ? 'ok' : 'bad'}`} />{meta.data?.source_db || 'source'}</span>
-    <span className="sub"><span className={`dot ${up(health.data?.target) ? 'ok' : 'bad'}`} />{meta.data?.target_db || 'target'}</span></header>
+    <label style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }} title="All monitor pages show this sync">Sync
+      <select className="pairsel" value={pair} onChange={(e) => pick(e.target.value)}>{pairs.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.state})</option>)}{!pairs.length && <option value="demo">demo</option>}</select></label>
+    <span className="sub"><span className={`dot ${up(health.data?.source) ? 'ok' : 'bad'}`} />source</span>
+    <span className="sub"><span className={`dot ${up(health.data?.target) ? 'ok' : 'bad'}`} />target</span>
+    <button className="btn" onClick={async () => { try { await send('POST', '/api/logout'); } catch { /* ignore */ } onSignedOut(); }} title={`Signed in as ${session.user}`}>Sign out</button></header>
     <main>
-      {health.data && (!up(health.data.source) || !up(health.data.target)) && <div className="alert critical"><b>Database not reachable.</b> Source: {String(health.data.source)} · Target: {String(health.data.target)}.
-        Check <code>docker compose ps -a</code> and <code>docker compose logs mssql</code>; the stack may be stopped or still starting.</div>}
-      {health.err && <div className="alert critical"><b>Monitor API not reachable:</b> {String(health.err.message)}</div>}
-      <Boundary k={tab}><Tab /></Boundary>
+      {monitorTab && cur && cur.state === 'error' && <div className="alert critical"><b>{cur.name} is in error:</b> {cur.error} <button className="btn" onClick={() => go('Sync jobs')}>Open Sync jobs</button></div>}
+      {monitorTab && cur && cur.state === 'applying' && <div className="alert warning"><b>{cur.name} is being set up.</b> Data appears here once the initial load finishes. <button className="btn" onClick={() => go('Sync jobs')}>Show progress</button></div>}
+      {monitorTab && cur && cur.state === 'paused' && <div className="alert warning"><b>{cur.name} is paused.</b> Changes queue up on the source until you resume it. <button className="btn" onClick={() => go('Sync jobs')}>Open Sync jobs</button></div>}
+      {monitorTab && health.data && (!up(health.data.source) || !up(health.data.target)) && <div className="alert critical"><b>Database not reachable.</b> Source: {String(health.data.source)} · Target: {String(health.data.target)}.
+        For the built-in demo check <code>docker compose ps -a</code> and <code>docker compose logs mssql</code>; for your own databases check the connection on the Connections tab.</div>}
+      {health.err && health.err.status !== 401 && <div className="alert critical"><b>Monitor API not reachable:</b> {String(health.err.message)}</div>}
+      <Boundary k={tab + pair}>
+        {monitorTab ? React.createElement(monitorTab) : tab === 'Sync jobs' ? <SyncJobs onOpenMonitor={(id) => { pick(id); go('Overview'); }} /> : <Connections />}
+      </Boundary>
     </main></>;
+}
+
+export default function App() {
+  const [session, setSession] = useState(undefined);       // undefined = loading
+  const refresh = () => get('/api/session').then(setSession).catch(() => setSession({ authenticated: false, configured: true }));
+  useEffect(() => { refresh(); const f = () => setSession((s) => (s?.authenticated ? { ...s, authenticated: false } : s)); window.addEventListener('unauthenticated', f); return () => window.removeEventListener('unauthenticated', f); }, []);
+  if (session === undefined) return <p style={{ padding: 24 }}>Loading…</p>;
+  if (!session.authenticated) return <Login configured={session.configured} onDone={refresh} />;
+  return <Shell session={session} onSignedOut={refresh} />;
 }

@@ -11,7 +11,7 @@ if errorlevel 1 (
 )
 docker compose run --rm tools wait-parity
 echo.
-echo Monitor UI : http://localhost:%MONITOR_PORT%
+echo Monitor UI : http://localhost:%MONITOR_PORT%   ^(sign in: user "admin", password = MONITOR_ADMIN_PASSWORD in .env^)
 echo SQL Server : localhost,%MSSQL_PORT%  login sa  ^(password in .env^)
 start "" http://localhost:%MONITOR_PORT%
 :end
