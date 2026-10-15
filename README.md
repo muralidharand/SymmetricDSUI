@@ -94,3 +94,7 @@ Design notes / lessons from building it:
 
 Restoring another backup (e.g. the full AdventureWorks2022) into the container: `restore-database.bat` / `scripts/restore-bak.sh`, see [docs/RESTORE-A-DATABASE.md](docs/RESTORE-A-DATABASE.md).
 Found while testing the full AdventureWorks2022: `hierarchyid` columns replicate, `geography` columns cannot be transported by SymmetricDS (skipped per column by the wizard), and the sys.types join used for generated DDL silently dropped CLR-type columns (fixed).
+
+Dependency checks added after the full AdventureWorks2022 failed on `dbo.ufnLeadingZeros`: the wizard now finds the functions, custom (alias) types, sequences and schemas that the tables it creates depend on (and creates them first),
+reports foreign-key parents that were not selected (with an "Add required parent tables" button), self-references and cycles, and refuses cleanly for encrypted/CLR/cross-database objects.
+Verified on the full database: 71 tables, 760,838 rows. SQL Server does not track references to system objects (`master.sys...`), so those are never flagged.

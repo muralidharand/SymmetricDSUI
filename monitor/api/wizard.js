@@ -6,6 +6,7 @@ import { q, exec, testConnection, cfgFor, explain, dropPool } from './db.js';
 import { getPair, savePair, listPairs, getConnection } from './store.js';
 import { compareSchema, createTableSql, tableColumns, loadOrder, userTriggers, spatialColumns, fq } from './discovery.js';
 import { computeParity } from './parity.js';
+import { analyzeDependencies, markExisting, targetFkProblems } from './dependencies.js';
 
 const ENG_DIR = process.env.RUNTIME_ENGINES_DIR || '/runtime/engines';
 const SYNC_HOST = process.env.RUNTIME_SYNC_HOST || 'sym-runtime';
@@ -146,13 +147,27 @@ async function applyPair(pair, user) {
       const missing = cmp.filter((c) => c.status === 'missing');
       pair.ddl = Object.fromEntries(missing.map((c) => [c.table, c.ddl])); savePair(pair);
       if (missing.length && !pair.options.createMissing) throw new Error(`These tables do not exist on the target: ${missing.map((m) => m.table).join(', ')}. Tick "Create missing tables on the target" or create them yourself.`);
+      // dependencies: objects (functions, alias types, sequences) needed by the tables we will create, and foreign keys
+      const deps = await analyzeDependencies(src, ordered, { objectTables: missing.map((m) => m.table) });
+      if (deps.blockers.length) throw new Error('Dependencies that cannot be copied automatically: ' + deps.blockers.join(' | '));
+      const fkProblems = await targetFkProblems(tgt, ordered);
+      if (fkProblems.length) throw new Error('Foreign key dependencies: ' + fkProblems.join(' | ') + '. Add the parent table(s) to the sync (step 2 offers "Add required parent tables") or disable/drop those foreign keys on the target.');
+      pair.objects = deps.objects.statements; pair.depWarnings = deps.warnings; savePair(pair);
+      const notes = [];
+      if (deps.objects.statements.length) notes.push(`${deps.objects.statements.length} object(s) to create on the target (${[...new Set(deps.objects.statements.map((x) => x.kind))].join(', ')})`);
+      if (deps.missingParents.length) notes.push(`${deps.missingParents.length} FK parent table(s) not selected: ${deps.missingParents.map((m) => m.table).join(', ')}`);
+      if (deps.selfRefs.length) notes.push(`self-referencing: ${deps.selfRefs.join(', ')}`);
+      if (deps.cycles.length) notes.push(`FK cycles: ${deps.cycles.map((c) => c.join(' <> ')).join('; ')}`);
+      pair.depNotes = notes; savePair(pair);
       const skipped = Object.entries(pair.excluded).map(([t, c]) => `${t}.${c.join(',')}`);
-      return `${ordered.length} table(s); ${missing.length} to create on the target; load order: ${ordered.join(' > ')}${skipped.length ? `. Not copied (geography/geometry): ${skipped.join('; ')}` : ''}`;
+      return `${ordered.length} table(s); ${missing.length} to create on the target; load order: ${ordered.join(' > ')}${skipped.length ? `. Not copied (geography/geometry): ${skipped.join('; ')}` : ''}${(pair.depNotes || []).length ? `. ${pair.depNotes.join('. ')}` : ''}`;
     });
 
     await step(pair, 'Prepare databases', async (s) => {
       const did = [];
-      for (const [t, ddl] of Object.entries(pair.ddl || {})) { await exec(tgt, ddl); did.push(`created ${t}`); note(pair, s, did.join('; ')); }
+      // order: schemas -> alias types -> sequences -> functions -> tables (tables may use them in columns, defaults, computed columns)
+      for (const o of pair.objects || []) { await exec(tgt, o.sql); did.push(`${o.kind} ${o.name}`); note(pair, s, 'created ' + did.join('; ')); }
+      for (const t of ordered) if (pair.ddl?.[t]) { await exec(tgt, pair.ddl[t]); did.push(`table ${t}`); note(pair, s, 'created ' + did.join('; ')); }
       if (pair.options.disableTargetTriggers) {
         pair.disabledTriggers = pair.disabledTriggers || [];
         for (const x of await userTriggers(tgt, ordered)) {

@@ -38,6 +38,7 @@ function Wizard({ onClose, onStarted }) {
   const [schema, setSchema] = useState(null);
   const [opts, setOpts] = useState({ createMissing: false, disableTargetTriggers: true, enableRcsi: false });
   const [name, setName] = useState('');
+  const [deps, setDeps] = useState(null);
   const [busy, setBusy] = useState(false); const [err, setErr] = useState(null);
   const cname = (id) => arr(conns).find((c) => c.id === id)?.name || id;
   const run = async (fn) => { setBusy(true); setErr(null); try { await fn(); } catch (e) { setErr(e.message); } finally { setBusy(false); } };
@@ -54,6 +55,14 @@ function Wizard({ onClose, onStarted }) {
     const p = await send('POST', '/api/pairs', { name: name.trim(), sourceConnId: src, targetConnId: tgt, tables: [...sel], options: opts });
     onStarted(p.id);
   });
+  // dependency check of the current selection (foreign-key parents, cycles, functions/types the tables need)
+  useEffect(() => {
+    if (step !== 1) return undefined;
+    if (!sel.size) { setDeps(null); return undefined; }
+    const t = setTimeout(() => { send('POST', '/api/pairs/deps', { sourceConnId: src, tables: [...sel] }).then(setDeps).catch((e) => setDeps({ failed: e.message })); }, 400);
+    return () => clearTimeout(t);
+  }, [step, sel, src]);
+  const addParents = () => setSel((s) => { const x = new Set(s); arr(deps?.missingParents).filter((m) => !m.blocked.length).forEach((m) => x.add(m.table)); return x; });
   useEffect(() => { if (step === 3 && !name) setName(`${cname(src)} to ${cname(tgt)}`.slice(0, 60)); }, [step]); // eslint-disable-line
 
   const titles = ['1 Connections', '2 Tables', '3 Target schema', '4 Options', '5 Review'];
@@ -82,7 +91,21 @@ function Wizard({ onClose, onStarted }) {
           <td>{t.name}</td><td className="num">{t.rows.toLocaleString()}</td>
           <td className="sub">{t.blocked.map((b, i) => <div key={i} className="err">✗ not supported: {b}</div>)}{t.warnings.map((w, i) => <div key={i}>⚠ {w}</div>)}</td></tr>)}
       </tbody></table></div>
-      <div className="row"><button className="btn" onClick={() => setStep(0)}>Back</button><button className="btn primary" disabled={busy || !sel.size} onClick={goSchema}>{busy ? 'Comparing…' : 'Compare with target'}</button></div>
+      {deps?.failed && <div className="alert warning">Dependency check failed: {deps.failed}</div>}
+      {deps && !deps.failed && <div className="deps">
+        <h4>Dependencies of the selection</h4>
+        {arr(deps.blockers).map((b, i) => <div key={i} className="alert critical">✗ {b}</div>)}
+        {arr(deps.missingParents).length > 0 && <div className="alert warning">
+          <b>{deps.missingParents.length} parent table(s) are referenced by foreign keys but not selected:</b>
+          <ul>{deps.missingParents.map((m) => <li key={m.table}>{m.table} <span className="sub">(needed by {m.requiredBy.join(', ')})</span>{m.blocked.length > 0 && <span className="err sub"> – cannot be added: {m.blocked[0]}</span>}</li>)}</ul>
+          <span className="sub">Child rows would point at parent rows that are not copied. Tables created by the wizard have no foreign keys, so this does not stop the sync, but an existing target with foreign keys would reject the rows.</span>
+          <div className="row"><button className="btn primary" onClick={addParents}>Add required parent tables</button></div></div>}
+        {arr(deps.missingParents).length === 0 && !arr(deps.blockers).length && <div className="sub">✓ All foreign-key parents of the selected tables are selected. Tables are loaded parents first.</div>}
+        {arr(deps.selfRefs).length > 0 && <div className="sub">ℹ Self-referencing foreign key (rows point at rows of the same table): {deps.selfRefs.join(', ')}. Rows are loaded in key order.</div>}
+        {arr(deps.cycles).length > 0 && <div className="alert warning">ℹ Circular foreign keys between: {deps.cycles.map((c) => c.join(' ⇄ ')).join('; ')}. No strict parent-first order exists; wizard-made target tables have no foreign keys, so this is fine there.</div>}
+        {arr(deps.warnings).map((w, i) => <div key={i} className="sub">⚠ {w}</div>)}
+      </div>}
+      <div className="row"><button className="btn" onClick={() => setStep(0)}>Back</button><button className="btn primary" disabled={busy || !sel.size || arr(deps?.blockers).length > 0} onClick={goSchema}>{busy ? 'Comparing…' : 'Compare with target'}</button></div>
     </>}
 
     {step === 2 && schema && <>
@@ -97,9 +120,16 @@ function Wizard({ onClose, onStarted }) {
       {missing.length > 0 && <div className="alert warning"><b>{missing.length} table(s) do not exist on the target.</b> The wizard can create them (columns, types, identity, computed columns, defaults, primary key; <i>not</i> foreign keys or other indexes).
         <label className="chk"><input type="checkbox" checked={opts.createMissing} onChange={(e) => setOpts({ ...opts, createMissing: e.target.checked })} /> Create missing tables on the target</label>
         {missing.map((m) => <details key={m.table}><summary>SQL for {m.table}</summary><pre>{m.ddl}</pre></details>)}</div>}
+      {arr(schema.deps?.blockers).map((b, i) => <div key={i} className="alert critical">✗ {b}</div>)}
+      {arr(schema.deps?.objects?.statements).length > 0 && <div className="alert">
+        <b>Objects the new target tables need (created first, in this order):</b>
+        <table><tbody>{schema.deps.objects.statements.map((o) => <tr key={o.kind + o.name}><td>{o.kind}</td><td>{o.name}</td><td>{o.exists ? <span className="pill mute">already on target</span> : <span className="pill warn">will be created</span>}</td>
+          <td>{o.preview && <details><summary>SQL</summary><pre>{o.preview}</pre></details>}</td></tr>)}</tbody></table>
+        <span className="sub">Found from computed columns, default and check constraints, and custom (alias) column types of the tables that will be created.</span></div>}
+      {arr(schema.deps?.warnings).map((w, i) => <div key={i} className="sub">⚠ {w}</div>)}
       {mismatch.length > 0 && <div className="alert critical">Some target tables differ from the source. Fix them (or drop them and let the wizard create them), then press Re-check.</div>}
       <div className="row"><button className="btn" onClick={() => setStep(1)}>Back</button><button className="btn" disabled={busy} onClick={goSchema}>Re-check</button>
-        <button className="btn primary" disabled={mismatch.length > 0 || (missing.length > 0 && !opts.createMissing)} onClick={() => { setOpts((o) => ({ ...o, disableTargetTriggers: arr(schema.targetTriggers).length > 0 })); setStep(3); }}>Continue</button></div>
+        <button className="btn primary" disabled={mismatch.length > 0 || arr(schema.deps?.blockers).length > 0 || (missing.length > 0 && !opts.createMissing)} onClick={() => { setOpts((o) => ({ ...o, disableTargetTriggers: arr(schema.targetTriggers).length > 0 })); setStep(3); }}>Continue</button></div>
     </>}
 
     {step === 3 && <>

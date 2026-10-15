@@ -54,8 +54,11 @@ A backup that is not in `data\`: copy it in with `docker cp "C:\path\file.bak" s
 | `Password is wrong` / login failures later | the `sa` password is the one from the first start (see the SSMS section) |
 
 ## Syncing the full AdventureWorks2022 with the wizard: what to expect
+**Verified with the real backup: all 71 tables (760,838 rows) synced into an empty database in a few minutes**, with the wizard creating the six custom types
+(`AccountNumber, Flag, Name, NameStyle, OrderNumber, Phone`), the function `dbo.ufnLeadingZeros` and the tables, parity 71/71, and live changes through the custom-typed columns.
+Select **Select all** in step 2 (or a related group) and tick *Create missing tables on the target*. The dependency checks are described in [ADD-YOUR-OWN-DATABASE.md](ADD-YOUR-OWN-DATABASE.md#4b-dependencies-the-wizard-checks-and-what-it-creates).
 Tested with the real `AdventureWorks2022.bak` (71 tables, 10 triggers). Discovery works for all tables and the wizard can create the tables on an empty target.
 * **Works:** identity, computed columns (also persisted), `hierarchyid`, `xml` (typed XML is created as plain `xml` on a new target table), large `nvarchar(max)/varbinary(max)`, FK-ordered initial load, live changes.
 * **`geography` / `geometry` columns are not copied** (SymmetricDS cannot transport them): the table is synced without that column (it stays empty on the target, e.g. `Person.Address.SpatialLocation`). The wizard shows this warning in step 2.
 * **Triggers** (some are INSTEAD OF) on source tables should be disabled on the target (step 4 option); new target tables created by the wizard have none.
-* Tables are selected one by one: take a related group (e.g. `Person.*` + `HumanResources.Employee`), not necessarily all 71. The checksum "Parity" ignores spatial/hierarchyid columns.
+* The checksum "Parity" ignores spatial and hierarchyid columns.

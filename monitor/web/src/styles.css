@@ -34,3 +34,4 @@ ol.steps{list-style:none;padding:0;margin:12px 0}ol.steps li{display:flex;gap:10
 ol.steps .ic{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;background:var(--bg);flex:none}
 .st-ok .ic{background:var(--okbg);color:var(--ok)}.st-error .ic{background:var(--badbg);color:var(--bad)}.st-running .ic{background:var(--warnbg);color:var(--warn)}
 details pre{max-height:220px;overflow:auto}header .pairsel{max-width:260px}
+.deps{margin:12px 0}.deps h4{margin:0 0 6px;font-size:13px}.deps ul{margin:6px 0 6px 18px;padding:0}

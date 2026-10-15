@@ -8,6 +8,7 @@ import { q as dq, seedDemo, testConnection, dropPool, cfgFor, explain } from './
 import { listConnections, getConnection, upsertConnection, deleteConnection, listPairs, getPair, savePair, newPairId, audit } from './store.js';
 import { login, logout, sessionOf, guard, authConfigured } from './auth.js';
 import { listTables, loadOrder, compareSchema, userTriggers } from './discovery.js';
+import { analyzeDependencies, markExisting } from './dependencies.js';
 import { computeParity } from './parity.js';
 import { precheck, startApply, pause, resume, reload, remove, engineFilesPresent, recoverInterrupted } from './wizard.js';
 
@@ -228,7 +229,21 @@ app.post('/api/pairs/schema-check', async (req) => {
   const { sourceConnId, targetConnId, tables = [] } = req.body || {};
   if (!getConnection(sourceConnId) || !getConnection(targetConnId)) throw Object.assign(new Error('Choose source and target'), { statusCode: 400 });
   const ordered = await loadOrder(sourceConnId, tables);
-  return { order: ordered, schema: await compareSchema(sourceConnId, targetConnId, ordered), targetTriggers: await userTriggers(targetConnId, ordered) };
+  const schema = await compareSchema(sourceConnId, targetConnId, ordered);
+  const missing = schema.filter((s) => s.status === 'missing').map((s) => s.table);
+  const deps = await analyzeDependencies(sourceConnId, ordered, { objectTables: missing });
+  await markExisting(targetConnId, deps.objects.statements);
+  return { order: ordered, schema, targetTriggers: await userTriggers(targetConnId, ordered), deps };
+});
+// dependency facts for the selection (step 2 of the wizard): FK parents not selected, self references, cycles, blockers
+app.post('/api/pairs/deps', async (req) => {
+  const { sourceConnId, tables = [] } = req.body || {};
+  if (!getConnection(sourceConnId)) throw Object.assign(new Error('Choose a source'), { statusCode: 400 });
+  if (!tables.length) return { missingParents: [], selfRefs: [], cycles: [], objects: { statements: [] }, blockers: [], warnings: [] };
+  const d = await analyzeDependencies(sourceConnId, tables);
+  const info = new Map((await listTables(sourceConnId)).map((t) => [t.name, t]));
+  d.missingParents = d.missingParents.map((m) => ({ ...m, blocked: info.get(m.table)?.blocked || [] }));
+  return d;
 });
 app.post('/api/pairs', async (req) => {
   const b = req.body || {};

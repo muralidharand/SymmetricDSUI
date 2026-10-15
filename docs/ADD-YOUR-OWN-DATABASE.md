@@ -60,6 +60,25 @@ Every step can be **retried** if it fails; finished steps are safe to repeat. Pa
 **Remove** can also “uninstall”: it drops the `sym_*` tables and capture triggers from both databases and re-enables the target triggers it disabled.
 Your own tables and data are never dropped.
 
+## 4b. Dependencies the wizard checks (and what it creates)
+**Foreign keys (parent / child)**
+| Check | Behaviour |
+|---|---|
+| Load order | the selected tables are sorted parents first by foreign key (`initial_load_order`), so child rows never arrive before their parents |
+| Parent tables you did not select | step 2 lists them (also parents of parents, with "needed by") and offers **Add required parent tables**. They do not stop the sync (tables the wizard creates have no foreign keys) but an existing target with foreign keys would reject the rows: in that case the apply refuses and tells you which table to add |
+| Self-references, circular keys | reported in step 2 (rows of a self-referencing table are loaded in key order); a cycle has no strict order, which is fine for wizard-made target tables |
+| Primary key | required for every table (greyed out otherwise) |
+
+**Other objects the new target tables need** (only for tables the wizard creates; found from computed columns, default and check constraints, column types)
+| Object | Behaviour |
+|---|---|
+| Scalar / inline / table functions (e.g. `dbo.ufnLeadingZeros` used by `Sales.Customer.AccountNumber`) | created on the target first, including functions they call (callee first) |
+| Custom (alias) types (`dbo.Name`, `dbo.Flag`, `dbo.Phone`, `dbo.AccountNumber`, ...) | created on the target and used by the columns, so the target mirrors the source |
+| Sequences used by defaults (`NEXT VALUE FOR`), non-`dbo` schemas | created first |
+| Encrypted functions, CLR functions/types, synonyms, references to **another user database** | cannot be copied: the wizard stops with a clear message (create them on the target yourself, or leave the table out). References to system objects (`master.sys...`) are fine |
+| Functions that read other tables | allowed, with a warning that those tables must exist on the target |
+Order of creation: schemas → alias types → sequences → functions → tables. All statements are idempotent (skipped if the object already exists). Views, procedures, triggers, indexes and foreign keys are **not** copied.
+
 ## 5. What changes in your databases
 * In **both** databases: ~45 `sym_*` tables and ~80 triggers named `SYM_ON_…` (SymmetricDS' own configuration, queue and capture).
 * On each replicated source table: three triggers (insert/update/delete) that record changes. Expect a little write overhead.
@@ -71,7 +90,7 @@ Your own tables and data are never dropped.
 * Tables need a primary key; `rowversion/timestamp` columns are not supported; `geography`/`geometry` columns are skipped (not copied). XML / large text columns work but slow the initial load.
 * The target tables should be **empty** before the first sync; the initial load copies everything from the source.
 * **Schema changes** (new column) are not replicated: add the column to the target first, then the source.
-* Created target tables have no foreign keys or secondary indexes (the data is already consistent from the source).
+* Created target tables have no foreign keys, secondary indexes, views or procedures (the data is already consistent from the source). Only objects that the created tables depend on are copied (section 4b).
 * Row-level “Parity” uses row count + `CHECKSUM_AGG(BINARY_CHECKSUM(*))`: fast, but under a case-insensitive collation a change that only alters letter case is not detected.
 * Applying a sync restarts the shared `sym-runtime` SymmetricDS server twice (a few seconds each); other UI-created syncs pause briefly and catch up. The demo is unaffected.
 * Only SQL Server family databases are supported by the wizard (SymmetricDS itself also supports PostgreSQL/MySQL/Oracle; not wired into the UI).

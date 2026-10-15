@@ -57,7 +57,7 @@ export async function loadOrder(cid, names) {
 export async function tableColumns(cid, schema, table) {
   const full = fq(schema, table);
   const cols = await q(cid, `
-    SELECT c.column_id, c.name, COALESCE(bt.name, ty.name) AS type, c.xml_collection_id, c.max_length, c.precision, c.scale, c.is_nullable, c.is_identity, c.is_computed,
+    SELECT c.column_id, c.name, COALESCE(bt.name, ty.name) AS type, ty.is_user_defined AS is_alias, ty.is_assembly_type AS is_assembly, SCHEMA_NAME(ty.schema_id) AS type_schema, ty.name AS type_name, c.xml_collection_id, c.max_length, c.precision, c.scale, c.is_nullable, c.is_identity, c.is_computed,
            CAST(ic.seed_value AS bigint) AS seed, CAST(ic.increment_value AS bigint) AS inc,
            cc.definition AS computed_def, cc.is_persisted AS computed_persisted, dc.definition AS default_def
     FROM sys.columns c
@@ -92,7 +92,7 @@ export function typeText(c) {
 export function createTableSql(schema, table, info) {
   const lines = info.columns.map((c) => {
     if (c.is_computed) return `  ${qi(c.name)} AS ${c.computed_def}${c.computed_persisted ? ' PERSISTED' : ''}`;
-    let s = `  ${qi(c.name)} ${typeText(c)}`;
+    let s = `  ${qi(c.name)} ${c.is_alias && !c.is_assembly ? fq(c.type_schema, c.type_name) : typeText(c)}`;   // alias types (dbo.Name ...) are created on the target first
     if (c.is_identity) s += ` IDENTITY(${c.seed ?? 1},${c.inc ?? 1})`;
     s += c.is_nullable || SPATIAL.includes(c.type) ? ' NULL' : ' NOT NULL';   // spatial columns are not copied, so they must allow NULL
     if (c.default_def) s += ` DEFAULT ${c.default_def}`;
