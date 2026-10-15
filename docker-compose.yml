@@ -43,7 +43,7 @@ services:
     image: jumpmind/symmetricds:3.16
     depends_on:
       mssql-init: { condition: service_completed_successfully }
-    ports: ["${SYM_SOURCE_PORT:-31415}:31415"]
+    ports: ["${SYM_SOURCE_PORT:-41415}:31415"]
     # the image has sh but no bash; start-node.sh renders the engine file from the template + env password, then runs sym
     command: ["/bin/sh", "/symds/start-node.sh", "source-000"]
     restart: unless-stopped
@@ -72,7 +72,7 @@ services:
     image: jumpmind/symmetricds:3.16
     depends_on:
       sym-config: { condition: service_completed_successfully }
-    ports: ["${SYM_TARGET_PORT:-31416}:31415"]
+    ports: ["${SYM_TARGET_PORT:-41416}:31415"]
     command: ["/bin/sh", "/symds/start-node.sh", "target-001"]
     restart: unless-stopped
     environment:
@@ -86,7 +86,7 @@ services:
     build: ./monitor
     depends_on:
       mssql-init: { condition: service_completed_successfully }
-    ports: ["${MONITOR_PORT:-8080}:8080"]
+    ports: ["${MONITOR_PORT:-18080}:8080"]
     restart: unless-stopped
     environment:
       MSSQL_HOST: mssql

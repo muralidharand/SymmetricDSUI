@@ -3,6 +3,7 @@ import fastifyStatic from '@fastify/static';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { q, dbNames } from './db.js';
 
 const app = Fastify({ logger: { level: 'warn' } });
@@ -12,7 +13,16 @@ const BACKLOG_WARN = Number(process.env.BACKLOG_WARN || 20);
 
 // Status semantics, see SymmetricDS user guide: NE new, RT routed, QY queried, SE sent, LD loading, ER error, IG ignored, OK done, RQ resend requested
 const STATUS_ORDER = ['NE', 'RT', 'QY', 'SE', 'LD', 'RQ', 'ER', 'IG', 'OK'];
-const safe = async (fn, fallback) => { try { return await fn(); } catch (e) { return { ...fallback, _error: e.message }; } };
+// Per-request error collector: a failing query degrades to its fallback (arrays stay arrays) and is reported in `errors`.
+const als = new AsyncLocalStorage();
+app.addHook('onRequest', (req, reply, done) => als.run({ errors: [] }, done));
+const errorsNow = () => als.getStore()?.errors ?? [];
+const safe = async (fn, fallback) => {
+  try { return await fn(); }
+  catch (e) { const st = als.getStore(); if (st && !st.errors.includes(e.message)) st.errors.push(e.message); return fallback; }
+};
+// anything not handled becomes a readable JSON error instead of an HTML/opaque 500
+app.setErrorHandler((err, req, reply) => reply.code(err.statusCode && err.statusCode < 500 ? err.statusCode : 503).send({ error: err.message }));
 
 app.get('/api/health', async () => ({
   source: await q('source', 'SELECT 1 AS ok').then(() => 'up').catch((e) => 'down: ' + e.message),
@@ -48,7 +58,7 @@ app.get('/api/overview', async () => {
     SELECT TOP 1 PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY DATEDIFF(MILLISECOND, create_time, last_update_time)) OVER () AS p95_ms
     FROM sym_outgoing_batch WHERE status='OK' AND channel_id NOT IN ('heartbeat','monitor','config','system','reload') AND create_time > DATEADD(HOUR,-1,GETDATE())`), [{}]);
   const backlog = outByStatus.filter?.((r) => !['OK', 'IG'].includes(r.status)).reduce((a, r) => a + r.n, 0) ?? 0;
-  return { nodes, outByStatus, inByStatus, backlog, latency: { ...(lat[0] || {}), p95_ms: p95[0]?.p95_ms ?? 0 }, statusOrder: STATUS_ORDER };
+  return { nodes, outByStatus, inByStatus, backlog, latency: { ...(lat[0] || {}), p95_ms: p95[0]?.p95_ms ?? 0 }, statusOrder: STATUS_ORDER, errors: errorsNow() };
 });
 
 // rows/min and latency per minute, last N minutes, per channel
@@ -134,12 +144,12 @@ app.get('/api/parity', async (req) => {
 app.get('/api/alerts', async () => {
   const alerts = [];
   const ov = await app.inject({ url: '/api/overview' }).then((r) => r.json());
-  for (const n of Array.isArray(ov.nodes) ? ov.nodes : []) {
+  for (const n of ov.nodes || []) {
     if (n.heartbeat_age_sec != null && n.heartbeat_age_sec > STALE_HEARTBEAT_MIN * 60)
       alerts.push({ severity: 'warning', kind: 'stale_heartbeat', message: `Node ${n.node_id} heartbeat is ${Math.round(n.heartbeat_age_sec / 60)} min old` });
     if (!n.sync_enabled) alerts.push({ severity: 'warning', kind: 'node_disabled', message: `Node ${n.node_id} sync disabled` });
   }
-  if (!Array.isArray(ov.nodes)) alerts.push({ severity: 'critical', kind: 'monitor_query', message: 'Cannot read node table: ' + ov.nodes?._error });
+  for (const m of ov.errors || []) alerts.push({ severity: 'critical', kind: 'monitor_query', message: 'Database read failed: ' + m });
   const errs = await app.inject({ url: '/api/errors' }).then((r) => r.json());
   for (const e of Array.isArray(errs.outgoing) ? errs.outgoing : []) alerts.push({ severity: 'critical', kind: 'batch_error', message: `Batch ${e.batch_id} (${e.channel_id}) → node ${e.node_id}: ${(e.sql_message || '').slice(0, 200)}` });
   if (ov.backlog > BACKLOG_WARN) alerts.push({ severity: 'warning', kind: 'backlog', message: `Backlog of ${ov.backlog} batches not yet loaded` });

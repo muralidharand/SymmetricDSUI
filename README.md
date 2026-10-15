@@ -53,7 +53,7 @@ SQL Server is on `localhost:14330` (sa / `.env`). Read-only login for the Phase 
 
 ---
 # Phase 2 — Monitoring UI (`monitor/`)
-Node 22 + Fastify API (`monitor/api`) and React/Vite/Recharts UI (`monitor/web`), served by one container on **http://localhost:8080**.
+Node 22 + Fastify API (`monitor/api`) and React/Vite/Recharts UI (`monitor/web`), served by one container on **http://localhost:18080**.
 It connects with the `monitor_ro` login (`db_datareader` only — it cannot modify anything) to both databases and reads the `sym_*` tables.
 
 ```bash

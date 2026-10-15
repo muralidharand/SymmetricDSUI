@@ -7,7 +7,7 @@ and the monitor UI. You start things by double-clicking `.bat` files, which only
 ```
  double-click start.bat ─► docker compose up ─► mssql ─► mssql-init (restore .bak twice: AW_Source, AW_Target)
                                                     └► sym-source ─► sym-config (load sync config) ─► sym-target (registers, initial load)
-                                                    └► monitor  http://localhost:8080
+                                                    └► monitor  http://localhost:18080
 ```
 
 ## 1. Prerequisites (one time)
@@ -18,6 +18,21 @@ and the monitor UI. You start things by double-clicking `.bat` files, which only
 | Internet for the first start | Downloads ~2.5 GB of images (SQL Server, SymmetricDS) and builds the monitor |
 | `AdventureWorksLT2022.bak` | You already have it |
 | x64 PC | (SQL Server image is not reliable on Windows-on-ARM) |
+
+### Already running another SQL Server / SymmetricDS in Docker?
+That is fine. This project is isolated (its own compose project `symds-poc`, network and volume) and uses **unusual host ports** so it does not
+collide with common ones:
+
+| Service | Port on your PC | `.env` variable | Typical clash it avoids |
+|---|---|---|---|
+| SQL Server | **14330** | `MSSQL_PORT` | 1433 |
+| SymmetricDS source node | **41415** | `SYM_SOURCE_PORT` | 31415 |
+| SymmetricDS target node | **41416** | `SYM_TARGET_PORT` | 31416 |
+| Monitor UI | **18080** | `MONITOR_PORT` | 8080 |
+
+`start.bat` checks these ports first and tells you which one is taken; change the number in `.env` and run again. The containers talk to
+each other on Docker's internal network, so these ports are only for you (SQL client, browser). The other thing to watch is **memory**:
+two SQL Servers need about 2 GB each, so give Docker Desktop 6-8 GB or SQL Server will be killed (exit code 137).
 
 ## 2. Get the project
 1. Download **https://github.com/muralidharand/symmetricdsui/archive/refs/heads/add-monitor-ui.zip**
@@ -42,7 +57,7 @@ Double-click **`start.bat`**. First run takes about 10 minutes (downloads), late
 | `monitor` | UI starts |
 | `wait-parity` | waits until every table is identical, prints the per-table counts and `PARITY: all tables match` |
 
-Then your browser opens **http://localhost:8080**. From now on every change committed in `AW_Source` is captured by triggers and
+Then your browser opens **http://localhost:18080**. From now on every change committed in `AW_Source` is captured by triggers and
 applied to `AW_Target` within seconds (one-way). `dbo.BuildVersion` is not replicated (it has no primary key).
 
 ## 4. Test the sync
@@ -68,7 +83,7 @@ target are **not** sent back.
 | `stop.bat` then `start.bat` | resumes, replicated data kept |
 
 ## 5. Monitor
-**http://localhost:8080** (read-only UI):
+**http://localhost:18080** (read-only UI):
 | Page | Use it to |
 |---|---|
 | Overview | alerts, *Backlog* (batches not yet loaded), *Errors*, latency avg/p95/max, rows per minute, node health |
@@ -100,7 +115,9 @@ Docker Desktop restarts the containers automatically after a reboot (SymmetricDS
 | `mssql` unhealthy or exits | Not enough memory: give Docker ≥ 6 GB (see prerequisites). Check `docker compose logs mssql` (password complexity?) |
 | `data\AdventureWorksLT2022.bak is missing` | Copy the file into the `data` folder |
 | `mssql-init` fails / restore error | `docker compose logs mssql-init`. Make sure the .bak is the full file (about 8.5 MB), not a partial download |
-| `port is already allocated` | Edit `.env` and change `MSSQL_PORT`, `SYM_SOURCE_PORT`, `SYM_TARGET_PORT` or `MONITOR_PORT`, then `start.bat` |
+| `port is already allocated` / start.bat says a port is in use | Edit `.env`, change the named port (`MSSQL_PORT`, `SYM_SOURCE_PORT`, `SYM_TARGET_PORT`, `MONITOR_PORT`), then `start.bat`. An existing `.env` keeps its old values: edit it, or delete it to get the new defaults |
+| Containers show *Exited* in Docker Desktop (SQL Server / sym-source / monitor stopped) | `docker compose ps -a`, then `docker compose logs mssql` (exit 137 = out of memory: raise Docker memory), `docker compose logs sym-source sym-config`. Then run `start.bat` again. `mssql-init` and `sym-config` showing *Exited (0)* is normal: they are one-shot jobs |
+| Monitor shows a red "Database not reachable" banner | SQL Server is stopped or still starting: run `start.bat`, wait a minute, the page recovers by itself. Old monitor versions crashed with `(c \|\| []).filter is not a function`: update the project and `docker compose build monitor` |
 | Drive/file sharing error mentioning the project path | Move the folder to `C:\symds` or under `C:\Users\<you>` |
 | start.bat ends with `WARNING: ... not identical` | Run `status.bat`. Wait a minute and run it again. If target tables stay empty: `reset.bat` then `start.bat` |
 | Monitor build fails (`SELF_SIGNED_CERT`, network) | A corporate proxy is inspecting HTTPS. Use a network without TLS inspection, or ask IT for the proxy CA to be trusted in Docker Desktop |

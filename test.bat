@@ -4,7 +4,7 @@ cd /d "%~dp0"
 call "%~dp0_check.bat" || goto :end
 docker compose run --rm tools smoke
 echo.
-echo Watch it in the monitor: http://localhost:8080  ^(Live feed / Batches^)
+echo Watch it in the monitor: http://localhost:%MONITOR_PORT%  ^(Live feed / Batches^)
 :end
 echo.
 pause
