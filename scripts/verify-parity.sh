@@ -1,6 +1,7 @@
 #!/bin/bash
 # Row-count + checksum parity between AW_Source and AW_Target for every replicated table. Exit 1 on any diff.
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+out=$(mktemp)
 sql -Q "
 SET NOCOUNT ON;
 DECLARE @t TABLE (s sysname, n sysname, sc bigint, sk int, tc bigint, tk int);
@@ -17,5 +18,10 @@ WHILE @@FETCH_STATUS=0 BEGIN
   INSERT @t EXEC (@q);
   FETCH NEXT FROM c INTO @s,@n;
 END CLOSE c; DEALLOCATE c;
+IF NOT EXISTS (SELECT 1 FROM @t) THROW 50000, 'No replicated tables found (sym_trigger empty): sync config not loaded', 1;
 SELECT s+'.'+n AS tbl, sc AS src_rows, tc AS tgt_rows, CASE WHEN sc=tc AND ISNULL(sk,0)=ISNULL(tk,0) THEN 'OK' ELSE 'DIFF' END AS parity FROM @t ORDER BY 1;
-" | tee /dev/stderr | grep -q DIFF && { echo "PARITY: DIFF FOUND" >&2; exit 1; } || echo "PARITY: all tables match"
+" > "$out" 2>&1; rc=$?
+cat "$out" >&2
+if [ $rc -ne 0 ]; then echo "PARITY: check failed to run (see above)" >&2; rm -f "$out"; exit 2; fi
+if grep -q DIFF "$out"; then echo "PARITY: DIFF FOUND" >&2; rm -f "$out"; exit 1; fi
+rm -f "$out"; echo "PARITY: all tables match"

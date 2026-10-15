@@ -1,4 +1,6 @@
-# SymmetricDS 3.16 Community — SQL Server → SQL Server POC (Phase 1)
+# SymmetricDS 3.16 Community — SQL Server → SQL Server POC (Phase 1 + 2)
+
+> **Running on Windows 11 / Docker Desktop? Follow [docs/LOCAL-SETUP-WINDOWS11.md](docs/LOCAL-SETUP-WINDOWS11.md)** (Linux/WSL2 only; step-by-step run, sync, test, monitor, troubleshooting).
 
 AdventureWorksLT2022 restored twice on one SQL Server 2022 container (`AW_Source`, `AW_Target`).
 Two SymmetricDS 3.16.19 nodes (`source-000` registration server, `target-001`) replicate `SalesLT.*` + `dbo.ErrorLog`
@@ -13,8 +15,9 @@ mssql (2022 Developer) ── AW_Source ◄─ sym-source :31415 ──push─�
 ```bash
 cp .env.example .env            # change passwords
 # put AdventureWorksLT2022.bak in ./data/ (already copied here)
-# create symds/engines/*.properties from the *.example files (they embed DB passwords, gitignored)
-scripts/up.sh                   # restore, start nodes, load config, register target, initial load
+# symds/engines/*.properties are generated from .env by scripts/up.sh
+scripts/up.sh                   # restore, start nodes, load config, register target, initial load, monitor
+scripts/status.sh               # quick status
 scripts/verify-parity.sh        # row-count + checksum per table, exit 1 on diff
 scripts/smoke-test.sh           # insert/update/delete incl. order+detail, waits for parity
 scripts/chaos-error.sh          # forces an error batch on the target, shows it blocks, then repairs

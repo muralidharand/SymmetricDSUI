@@ -1,0 +1,11 @@
+# Windows checkouts must not convert these to CRLF: they run inside Linux containers / bash.
+* text=auto
+*.sh text eol=lf
+*.sql text eol=lf
+*.properties text eol=lf
+*.example text eol=lf
+Dockerfile text eol=lf
+*.yml text eol=lf
+*.js text eol=lf
+*.jsx text eol=lf
+*.bak binary
