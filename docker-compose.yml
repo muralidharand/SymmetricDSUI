@@ -8,6 +8,7 @@ services:
       ACCEPT_EULA: "Y"
       MSSQL_PID: Developer
       MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD}
+    stop_grace_period: 60s      # let SQL Server shut down cleanly (default 10s force-kills it)
     ports: ["${MSSQL_PORT:-14330}:1433"]
     volumes:
       - mssql-data:/var/opt/mssql

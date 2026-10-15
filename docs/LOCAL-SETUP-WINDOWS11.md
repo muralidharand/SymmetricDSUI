@@ -124,10 +124,23 @@ docker compose logs -f sym-source sym-target        # SymmetricDS logs (Ctrl-C t
 docker compose logs -f monitor
 ```
 
-## 7. Stop, start, reset
+## 7. Stop, start, restore the databases, reset
+**Double-click launchers** (they just call the Linux scripts below through WSL; folder `windows/`):
+
+| File | Does |
+|---|---|
+| `windows\start.bat` | starts Docker Desktop if needed, runs `scripts/up.sh` (first run: full setup; later: resume, data kept), opens the monitor |
+| `windows\stop.bat` | `scripts/stop.sh`: stops everything, **keeps all data** |
+| `windows\db-restore.bat` | asks for `YES`, then `scripts/restore-db.sh`: **drops AW_Source and AW_Target**, restores both from the .bak and re-runs the initial load |
+| `windows\status.bat` | `scripts/status.sh` |
+
+Setup: copy the `windows` folder out of WSL to e.g. `C:\symds\` (in Explorer open `\\wsl$\Ubuntu\home\<linux-user>\symmetricdsui\windows`),
+then edit `config.bat`: `DISTRO` (see `wsl -l -q`) and `REPO` (default `~/symmetricdsui`). Keep all the files in that folder together.
+The `.bat` files are not required: the same actions from the Ubuntu terminal are:
 ```bash
-docker compose stop            # stop, keep data
-docker compose start           # start again (no need for up.sh)
+scripts/stop.sh                # stop, keep data
+scripts/up.sh                  # start again / resume (safe to re-run, never wipes replicated data)
+scripts/restore-db.sh          # re-restore both DBs from the .bak + re-init sync (asks YES; --yes skips)
 docker compose down            # remove containers, keep database volume
 scripts/reset.sh               # DELETE everything incl. databases (docker compose down -v); then run scripts/up.sh
 ```

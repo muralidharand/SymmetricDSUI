@@ -9,3 +9,4 @@ Dockerfile text eol=lf
 *.js text eol=lf
 *.jsx text eol=lf
 *.bak binary
+*.bat text eol=crlf
