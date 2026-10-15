@@ -136,6 +136,7 @@ services:
     volumes:
       - ./tools:/tools:ro
       - ./symds/config:/config:ro
+      - ./data:/backup:ro
     entrypoint: ["/bin/bash", "/tools/run.sh"]
 
 volumes:

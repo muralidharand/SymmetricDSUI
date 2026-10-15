@@ -109,6 +109,10 @@ Other logins (all with the passwords from `.env`): `symds` (db_owner on AW_Sourc
 Two different addresses, do not mix them up: **from Windows** (SSMS, browser) use `localhost,14330`; **from inside Docker** (the Connections tab of the monitor, SymmetricDS) the same server is `mssql`, port `1433`.
 The optional second server (`docker compose --profile extra-sql up -d mssql2`) is published as `localhost,14331` (`MSSQL2_PORT`).
 
+## 5b. Restore another backup (for example the full AdventureWorks2022)
+Put the `.bak` in the **`data`** folder and run **`restore-database.bat AdventureWorks2022.bak`** (no argument = it lists the backups and asks).
+It restores into the SQL Server container, then you can open it in SSMS or use it in the sync wizard. Details and manual SQL: [RESTORE-A-DATABASE.md](RESTORE-A-DATABASE.md).
+
 ## 6. Use your own databases (optional)
 In the monitor, **Connections** saves a source and a target database, and **Sync jobs → New sync** sets up SymmetricDS between them (pick tables,
 let it create missing target tables, watch the progress). Run **`sample-databases.bat`** first if you just want to try it with two sample databases.

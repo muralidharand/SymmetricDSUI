@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { q, exec, testConnection, cfgFor, explain, dropPool } from './db.js';
 import { getPair, savePair, listPairs, getConnection } from './store.js';
-import { compareSchema, createTableSql, tableColumns, loadOrder, userTriggers, fq } from './discovery.js';
+import { compareSchema, createTableSql, tableColumns, loadOrder, userTriggers, spatialColumns, fq } from './discovery.js';
 import { computeParity } from './parity.js';
 
 const ENG_DIR = process.env.RUNTIME_ENGINES_DIR || '/runtime/engines';
@@ -65,7 +65,7 @@ async function waitFor(fn, { timeout = 180000, every = 2000, what = 'condition' 
 }
 
 // ---------- config written into the source database ----------
-function configSql(pair, ordered) {
+function configSql(pair, ordered, excluded = {}) {
   const out = ['SET NOCOUNT ON;',
     `DELETE FROM sym_trigger_router WHERE router_id = 'sync_router';`,
     `DELETE FROM sym_trigger WHERE trigger_id LIKE 'sync[_]%';`,
@@ -80,7 +80,8 @@ function configSql(pair, ordered) {
     `INSERT INTO sym_router (router_id, source_node_group_id, target_node_group_id, router_type, create_time, last_update_time) VALUES ('sync_router', 'source', 'target', 'default', GETDATE(), GETDATE());`];
   ordered.forEach((t, i) => {
     const [schema, ...rest] = t.split('.'); const table = rest.join('.'); const tid = `sync_${schema}_${table}`.slice(0, 120);
-    out.push(`INSERT INTO sym_trigger (trigger_id, source_schema_name, source_table_name, channel_id, last_update_time, create_time) VALUES ('${esc(tid)}', '${esc(schema)}', '${esc(table)}', 'sync_data', GETDATE(), GETDATE());`);
+    const ex = (excluded[t] || []).join(',');
+    out.push(`INSERT INTO sym_trigger (trigger_id, source_schema_name, source_table_name, channel_id, excluded_column_names, last_update_time, create_time) VALUES ('${esc(tid)}', '${esc(schema)}', '${esc(table)}', 'sync_data', ${ex ? `'${esc(ex)}'` : 'NULL'}, GETDATE(), GETDATE());`);
     out.push(`INSERT INTO sym_trigger_router (trigger_id, router_id, initial_load_order, last_update_time, create_time) VALUES ('${esc(tid)}', 'sync_router', ${(i + 1) * 10}, GETDATE(), GETDATE());`);
   });
   return out.join('\n');
@@ -137,13 +138,16 @@ async function applyPair(pair, user) {
       const tables = pair.tables;
       if (!tables.length) throw new Error('No tables selected');
       ordered = await loadOrder(src, tables);
+      pair.excluded = {};
+      for (const t of ordered) { const [sch, ...r] = t.split('.'); const sp = await spatialColumns(src, sch, r.join('.')); if (sp.length) pair.excluded[t] = sp; }
       const cmp = await compareSchema(src, tgt, ordered);
       const bad = cmp.filter((c) => c.status === 'mismatch');
       if (bad.length) throw new Error('Target tables differ from the source: ' + bad.map((c) => `${c.table} (${[c.missingCols?.length ? 'missing columns ' + c.missingCols.join(', ') : '', ...(c.typeDiff || [])].filter(Boolean).join('; ')})`).join(' | ') + '. Fix the target tables, or drop them and let the wizard create them.');
       const missing = cmp.filter((c) => c.status === 'missing');
       pair.ddl = Object.fromEntries(missing.map((c) => [c.table, c.ddl])); savePair(pair);
       if (missing.length && !pair.options.createMissing) throw new Error(`These tables do not exist on the target: ${missing.map((m) => m.table).join(', ')}. Tick "Create missing tables on the target" or create them yourself.`);
-      return `${ordered.length} table(s); ${missing.length} to create on the target; load order: ${ordered.join(' > ')}`;
+      const skipped = Object.entries(pair.excluded).map(([t, c]) => `${t}.${c.join(',')}`);
+      return `${ordered.length} table(s); ${missing.length} to create on the target; load order: ${ordered.join(' > ')}${skipped.length ? `. Not copied (geography/geometry): ${skipped.join('; ')}` : ''}`;
     });
 
     await step(pair, 'Prepare databases', async (s) => {
@@ -180,7 +184,7 @@ async function applyPair(pair, user) {
     });
 
     await step(pair, 'Load sync configuration', async (s) => {
-      await exec(src, configSql(pair, ordered));
+      await exec(src, configSql(pair, ordered, pair.excluded || {}));
       note(pair, s, 'configuration saved, waiting for SymmetricDS to create the capture triggers');
       const want = ordered.length * 3;
       const t0 = Date.now(); let nudged = false;

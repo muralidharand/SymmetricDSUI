@@ -15,6 +15,9 @@ export async function listTables(cid) {
       (SELECT COUNT(*) FROM sys.columns c JOIN sys.types ty ON ty.user_type_id = c.user_type_id WHERE c.object_id = t.object_id AND ty.name = 'timestamp') AS rowversion_cols,
       (SELECT COUNT(*) FROM sys.columns c JOIN sys.types ty ON ty.user_type_id = c.user_type_id WHERE c.object_id = t.object_id
          AND (ty.name IN ('text','ntext','image','xml','geography','geometry','hierarchyid','sql_variant') OR (ty.name IN ('varchar','nvarchar','varbinary') AND c.max_length = -1))) AS lob_columns,
+      (SELECT COUNT(*) FROM sys.columns c JOIN sys.types ty ON ty.user_type_id = c.user_type_id WHERE c.object_id = t.object_id AND ty.name = 'hierarchyid') AS hier_cols,
+      (SELECT COUNT(*) FROM sys.columns c JOIN sys.types ty ON ty.user_type_id = c.user_type_id WHERE c.object_id = t.object_id AND ty.name IN ('geography','geometry')) AS spatial_cols,
+      (SELECT COUNT(*) FROM sys.columns c WHERE c.object_id = t.object_id AND c.xml_collection_id <> 0) AS typed_xml_cols,
       (SELECT COUNT(*) FROM sys.triggers tr WHERE tr.parent_id = t.object_id AND tr.name NOT LIKE 'SYM[_]ON[_]%' AND tr.is_disabled = 0) AS user_triggers
     FROM sys.tables t JOIN sys.schemas s ON s.schema_id = t.schema_id
     WHERE t.is_ms_shipped = 0 AND t.name NOT LIKE 'sym[_]%' AND t.name <> 'sysdiagrams'
@@ -26,9 +29,12 @@ export async function listTables(cid) {
     const warnings = [];
     if (r.lob_columns) warnings.push(`${r.lob_columns} large-object column(s): slower initial load`);
     if (r.computed) warnings.push(`${r.computed} computed column(s): recomputed on the target`);
+    if (r.hier_cols) warnings.push(`${r.hier_cols} hierarchyid column(s): copied`);
+    if (r.spatial_cols) warnings.push(`${r.spatial_cols} geography/geometry column(s) are NOT copied (SymmetricDS cannot transport them): the rest of the table is synced, the column stays empty on the target`);
+    if (r.typed_xml_cols) warnings.push(`${r.typed_xml_cols} typed XML column(s): created as plain xml on a new target table (the XML schema collection is not copied)`);
     if (r.user_triggers) warnings.push(`${r.user_triggers} trigger(s): disable them on the target (option in step 4)`);
     return { schema: r.schema, table: r.table, name: `${r.schema}.${r.table}`, rows: Number(r.row_count), hasPk: !!r.has_pk, columns: r.columns,
-             computed: r.computed, identities: r.identities, lob: r.lob_columns, userTriggers: r.user_triggers, blocked, warnings };
+             computed: r.computed, identities: r.identities, lob: r.lob_columns, spatial: r.spatial_cols, hier: r.hier_cols, typedXml: r.typed_xml_cols, userTriggers: r.user_triggers, blocked, warnings };
   });
 }
 
@@ -51,12 +57,12 @@ export async function loadOrder(cid, names) {
 export async function tableColumns(cid, schema, table) {
   const full = fq(schema, table);
   const cols = await q(cid, `
-    SELECT c.column_id, c.name, bt.name AS type, c.max_length, c.precision, c.scale, c.is_nullable, c.is_identity, c.is_computed,
+    SELECT c.column_id, c.name, COALESCE(bt.name, ty.name) AS type, c.xml_collection_id, c.max_length, c.precision, c.scale, c.is_nullable, c.is_identity, c.is_computed,
            CAST(ic.seed_value AS bigint) AS seed, CAST(ic.increment_value AS bigint) AS inc,
            cc.definition AS computed_def, cc.is_persisted AS computed_persisted, dc.definition AS default_def
     FROM sys.columns c
     JOIN sys.types ty ON ty.user_type_id = c.user_type_id
-    JOIN sys.types bt ON bt.user_type_id = ty.system_type_id
+    LEFT JOIN sys.types bt ON bt.user_type_id = ty.system_type_id   -- LEFT: CLR types (hierarchyid, geography, geometry) have no base row
     LEFT JOIN sys.identity_columns ic ON ic.object_id = c.object_id AND ic.column_id = c.column_id
     LEFT JOIN sys.computed_columns cc ON cc.object_id = c.object_id AND cc.column_id = c.column_id
     LEFT JOIN sys.default_constraints dc ON dc.parent_object_id = c.object_id AND dc.parent_column_id = c.column_id
@@ -68,6 +74,10 @@ export async function tableColumns(cid, schema, table) {
   return { columns: cols, pk };
 }
 
+export const SPATIAL = ['geography', 'geometry'];
+// columns SymmetricDS cannot transport: they are excluded from the sync (left NULL on the target)
+export async function spatialColumns(cid, schema, table) { return (await tableColumns(cid, schema, table)).columns.filter((c) => SPATIAL.includes(c.type)).map((c) => c.name); }
+
 export function typeText(c) {
   const t = c.type;
   if (['char', 'varchar', 'binary', 'varbinary'].includes(t)) return `${t}(${c.max_length === -1 ? 'max' : c.max_length})`;
@@ -75,6 +85,7 @@ export function typeText(c) {
   if (['decimal', 'numeric'].includes(t)) return `${t}(${c.precision},${c.scale})`;
   if (['datetime2', 'time', 'datetimeoffset'].includes(t)) return `${t}(${c.scale})`;
   if (t === 'timestamp') return 'rowversion';
+  if (t === 'xml') return 'xml';   // typed XML is compared/created as plain xml (schema collection is not copied)
   return t;
 }
 
@@ -83,7 +94,7 @@ export function createTableSql(schema, table, info) {
     if (c.is_computed) return `  ${qi(c.name)} AS ${c.computed_def}${c.computed_persisted ? ' PERSISTED' : ''}`;
     let s = `  ${qi(c.name)} ${typeText(c)}`;
     if (c.is_identity) s += ` IDENTITY(${c.seed ?? 1},${c.inc ?? 1})`;
-    s += c.is_nullable ? ' NULL' : ' NOT NULL';
+    s += c.is_nullable || SPATIAL.includes(c.type) ? ' NULL' : ' NOT NULL';   // spatial columns are not copied, so they must allow NULL
     if (c.default_def) s += ` DEFAULT ${c.default_def}`;
     return s;
   });

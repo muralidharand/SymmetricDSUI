@@ -91,3 +91,6 @@ Design notes / lessons from building it:
 - The target node is started only after the config and capture triggers exist (registering earlier gives an empty initial load).
 - Business triggers on target tables must be disabled (the wizard offers it and re-enables them on uninstall).
 - A failed query used to return an object where the UI expected a list and crash the page: the API now always returns lists plus an `errors` array.
+
+Restoring another backup (e.g. the full AdventureWorks2022) into the container: `restore-database.bat` / `scripts/restore-bak.sh`, see [docs/RESTORE-A-DATABASE.md](docs/RESTORE-A-DATABASE.md).
+Found while testing the full AdventureWorks2022: `hierarchyid` columns replicate, `geography` columns cannot be transported by SymmetricDS (skipped per column by the wizard), and the sys.types join used for generated DDL silently dropped CLR-type columns (fixed).

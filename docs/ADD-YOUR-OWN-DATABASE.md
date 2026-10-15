@@ -21,6 +21,8 @@ The AdventureWorks demo keeps running unchanged (shown as the built-in sync "Dem
 | Target tables **exist** (same columns/types) or you tick “Create missing tables” | the wizard can create them for you (not foreign keys / other indexes) |
 | A database can be used in **one** sync only | the `sym_*` objects live inside it |
 
+Need a database to try? Restore a backup into the Docker SQL Server first: [RESTORE-A-DATABASE.md](RESTORE-A-DATABASE.md).
+
 ## 2. How to address your server from inside Docker
 The containers connect, so use a name that works *from the Docker network*, not from your browser:
 | Where the SQL Server runs | Host to enter | Port |
@@ -66,7 +68,7 @@ Your own tables and data are never dropped.
 
 ## 6. Limits to know about
 * **One-way** (source → target). Changes made directly on the target are not sent back and can make the databases drift.
-* Tables need a primary key; `rowversion/timestamp` columns are not supported. XML / large text columns work but slow the initial load.
+* Tables need a primary key; `rowversion/timestamp` columns are not supported; `geography`/`geometry` columns are skipped (not copied). XML / large text columns work but slow the initial load.
 * The target tables should be **empty** before the first sync; the initial load copies everything from the source.
 * **Schema changes** (new column) are not replicated: add the column to the target first, then the source.
 * Created target tables have no foreign keys or secondary indexes (the data is already consistent from the source).
