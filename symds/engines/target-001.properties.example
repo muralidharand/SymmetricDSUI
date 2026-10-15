@@ -1,0 +1,16 @@
+engine.name=target-001
+group.id=target
+external.id=001
+
+db.driver=com.microsoft.sqlserver.jdbc.SQLServerDriver
+db.url=jdbc:sqlserver://mssql:1433;databaseName=AW_Target;encrypt=true;trustServerCertificate=true
+db.user=symds
+db.password=CHANGE_ME
+
+registration.url=http://sym-source:31415/sync/source-000
+sync.url=http://sym-target:31415/sync/target-001
+
+auto.config.database=true
+job.routing.period.time.ms=2000
+job.push.period.time.ms=2000
+job.pull.period.time.ms=2000

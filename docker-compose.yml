@@ -1,0 +1,76 @@
+name: symds-poc
+
+services:
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    platform: linux/amd64
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: Developer
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD}
+    ports: ["${MSSQL_PORT:-14330}:1433"]
+    volumes:
+      - mssql-data:/var/opt/mssql
+      - ./data:/backup:ro
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -Q 'SELECT 1' -b -o /dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  # one-shot: restore AdventureWorksLT2022 twice (AW_Source / AW_Target), create logins
+  mssql-init:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    platform: linux/amd64
+    depends_on:
+      mssql: { condition: service_healthy }
+    environment:
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD}
+      SYMDS_DB_PASSWORD: ${SYMDS_DB_PASSWORD}
+      MONITOR_RO_PASSWORD: ${MONITOR_RO_PASSWORD}
+    volumes:
+      - ./mssql:/init:ro
+    entrypoint: ["/bin/bash", "/init/init.sh"]
+    restart: "no"
+
+  sym-source:
+    image: jumpmind/symmetricds:3.16.19
+    depends_on:
+      mssql-init: { condition: service_completed_successfully }
+    ports: ["${SYM_SOURCE_PORT:-31415}:31415"]
+    # foreground launcher: the image default (sym_service daemon + tail) exits 129 on `docker restart` (stale PID file)
+    command: ["/opt/symmetric-ds/bin/sym"]
+    restart: unless-stopped
+    environment:
+      JAVA_OPTS: "-Xmx1g"
+    volumes:
+      - ./symds/engines/source-000.properties:/opt/symmetric-ds/engines/source-000.properties:ro
+      - ./symds/config:/config:ro
+
+  sym-target:
+    image: jumpmind/symmetricds:3.16.19
+    depends_on:
+      - sym-source
+    ports: ["${SYM_TARGET_PORT:-31416}:31415"]
+    # foreground launcher: the image default (sym_service daemon + tail) exits 129 on `docker restart` (stale PID file)
+    command: ["/opt/symmetric-ds/bin/sym"]
+    restart: unless-stopped
+    environment:
+      JAVA_OPTS: "-Xmx1g"
+    volumes:
+      - ./symds/engines/target-001.properties:/opt/symmetric-ds/engines/target-001.properties:ro
+
+  monitor:
+    build: ./monitor
+    depends_on:
+      mssql-init: { condition: service_completed_successfully }
+    ports: ["${MONITOR_PORT:-8080}:8080"]
+    restart: unless-stopped
+    environment:
+      MSSQL_HOST: mssql
+      MONITOR_USER: monitor_ro            # read-only (db_datareader) on both databases
+      MONITOR_RO_PASSWORD: ${MONITOR_RO_PASSWORD}
+
+volumes:
+  mssql-data:

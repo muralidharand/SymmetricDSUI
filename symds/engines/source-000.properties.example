@@ -1,0 +1,26 @@
+# Registration server node (source side)
+engine.name=source-000
+group.id=source
+external.id=000
+
+db.driver=com.microsoft.sqlserver.jdbc.SQLServerDriver
+# POC only: trustServerCertificate=true (self-signed container cert). Use a trusted CA in Azure/AWS.
+db.url=jdbc:sqlserver://mssql:1433;databaseName=AW_Source;encrypt=true;trustServerCertificate=true
+db.user=symds
+db.password=CHANGE_ME
+
+# empty registration.url => this node is the registration server
+registration.url=
+sync.url=http://sym-source:31415/sync/source-000
+
+# create sym_* tables on first start
+auto.config.database=true
+# send initial load automatically once a node registers
+auto.reload=true
+# registration must be opened explicitly (symadmin open-registration)
+auto.registration=false
+
+# faster demo cadence (defaults are 10000 ms)
+job.routing.period.time.ms=2000
+job.push.period.time.ms=2000
+job.pull.period.time.ms=2000

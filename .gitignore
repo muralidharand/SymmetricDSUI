@@ -1,0 +1,8 @@
+.env
+data/*.bak
+monitor/node_modules
+symds/engines/*.properties
+!symds/engines/*.properties.example
+monitor/api/node_modules
+monitor/api/public
+monitor/web/dist
