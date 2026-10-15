@@ -83,12 +83,38 @@ target are **not** sent back.
 | `docker compose stop sym-target`, change data, `docker compose start sym-target` | monitor shows a backlog, then it drains; nothing lost |
 | `stop.bat` then `start.bat` | resumes, replicated data kept |
 
-## 5. Use your own databases (optional)
+## 5. Connect with SSMS / Azure Data Studio
+The SQL Server in Docker is published on your PC, so SSMS on Windows can open it directly:
+
+| SSMS field | Value |
+|---|---|
+| Server type | Database Engine |
+| **Server name** | **`localhost,14330`** (a **comma**, not a colon; the port is `MSSQL_PORT` in `.env`, default 14330. `127.0.0.1,14330` also works) |
+| Authentication | **SQL Server Authentication** |
+| Login | `sa` |
+| Password | `MSSQL_SA_PASSWORD` from `.env` (default in `.env.example`: `ChangeMe_Str0ng!Pass`) |
+| Options → Connection Properties → Encrypt | `Mandatory` or `Optional` |
+| Options → Connection Properties | **tick “Trust server certificate”** (the container uses a self-signed certificate; without this SSMS 19/20 says *certificate chain was issued by an authority that is not trusted*) |
+
+Connection strings (replace the password):
+```
+ADO.NET / ODBC : Server=localhost,14330;User ID=sa;Password=<password>;Encrypt=True;TrustServerCertificate=True;
+JDBC           : jdbc:sqlserver://localhost:14330;user=sa;password=<password>;encrypt=true;trustServerCertificate=true
+sqlcmd         : sqlcmd -S localhost,14330 -U sa -P "<password>" -C
+```
+Databases you will see: `AW_Source` and `AW_Target` (the demo), plus `Shop_A` / `Shop_B` after `sample-databases.bat`.
+Other logins (all with the passwords from `.env`): `symds` (db_owner on AW_Source/AW_Target, used by SymmetricDS), `monitor_ro` (read-only, used by the demo monitor),
+`shopsync` (db_owner on the sample shop databases, password `Shop_Sync_Str0ng!1`).
+
+Two different addresses, do not mix them up: **from Windows** (SSMS, browser) use `localhost,14330`; **from inside Docker** (the Connections tab of the monitor, SymmetricDS) the same server is `mssql`, port `1433`.
+The optional second server (`docker compose --profile extra-sql up -d mssql2`) is published as `localhost,14331` (`MSSQL2_PORT`).
+
+## 6. Use your own databases (optional)
 In the monitor, **Connections** saves a source and a target database, and **Sync jobs → New sync** sets up SymmetricDS between them (pick tables,
 let it create missing target tables, watch the progress). Run **`sample-databases.bat`** first if you just want to try it with two sample databases.
 Full guide: [ADD-YOUR-OWN-DATABASE.md](ADD-YOUR-OWN-DATABASE.md). A SQL Server on this Windows PC is reached as host `host.docker.internal`.
 
-## 6. Monitor
+## 7. Monitor
 **http://localhost:18080**. Sign in with user `admin` and the password `MONITOR_ADMIN_PASSWORD` from `.env` (default in `.env.example`; change it). The **Sync** selector in the header chooses which sync every page shows:
 | Page | Use it to |
 |---|---|
@@ -104,7 +130,7 @@ A failing batch is `LD` + message on the source side and `ER` on the target side
 
 Logs: `docker compose logs -f sym-source sym-target` (Ctrl-C to stop watching) or use Docker Desktop → Containers.
 
-## 7. Stop, restore the databases, reset
+## 8. Stop, restore the databases, reset
 | File | Does |
 |---|---|
 | **`stop.bat`** | stops all containers, **keeps all data** |
@@ -113,11 +139,14 @@ Logs: `docker compose logs -f sym-source sym-target` (Ctrl-C to stop watching) o
 | **`reset.bat`** | asks `YES`, removes all containers **and the SQL Server volume** (everything). Next `start.bat` rebuilds from scratch. Needed after changing passwords |
 Docker Desktop restarts the containers automatically after a reboot (SymmetricDS has `restart: unless-stopped`).
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 | Symptom | Fix |
 |---|---|
 | `Docker is not running` / start.bat waits long | Start Docker Desktop and wait for *Engine running*; start.bat also tries to start it |
 | `no matching manifest` / `image operating system "linux" cannot be used` | Docker Desktop is in Windows containers mode: tray icon → *Switch to Linux containers* |
+| SSMS: *A network-related or instance-specific error* / *Cannot connect to localhost* | Check `docker compose ps` shows `mssql` as *healthy*; use `localhost,14330` (comma) not `localhost:14330` or `localhost\SQLEXPRESS`; the port is `MSSQL_PORT` in `.env`; the Docker Desktop container list shows the real mapping (e.g. `14330:1433`) |
+| SSMS: *certificate chain was issued by an authority that is not trusted* | Options >> Connection Properties >> tick **Trust server certificate** (or set Encrypt to Optional) |
+| SSMS: *Login failed for user 'sa'* | The password is the one in `.env` **from the first start**: it is stored in the database volume. After editing `.env` run `reset.bat` |
 | `mssql` unhealthy or exits | Not enough memory: give Docker ≥ 6 GB (see prerequisites). Check `docker compose logs mssql` (password complexity?) |
 | `data\AdventureWorksLT2022.bak is missing` | Copy the file into the `data` folder |
 | `mssql-init` fails / restore error | `docker compose logs mssql-init`. Make sure the .bak is the full file (about 8.5 MB), not a partial download |
@@ -131,7 +160,7 @@ Docker Desktop restarts the containers automatically after a reboot (SymmetricDS
 | Changed a password after the first start | `reset.bat`, then `start.bat` |
 | A `.sh` file edited in Notepad stops working | Shell/SQL files must keep Unix (LF) line endings: edit with VS Code/Notepad++ set to LF, or do not edit them |
 
-## 9. What is where
+## 10. What is where
 `docker-compose.yml` services and startup order · `mssql/` restore + logins · `symds/config/sym-config.sql` what is replicated ·
 `symds/engines/*.properties.example` node settings (password injected from `.env`) · `tools/` scripts that run **inside** a helper container ·
 `monitor/` UI + API · `*.bat` Windows launchers · `scripts/*.sh` the same actions for Linux/macOS users · `README.md` design notes and lessons learned.

@@ -123,6 +123,7 @@ services:
       MSSQL_PID: Developer
       MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD}
     stop_grace_period: 60s
+    ports: ["${MSSQL2_PORT:-14331}:1433"]
     volumes:
       - mssql2-data:/var/opt/mssql
 

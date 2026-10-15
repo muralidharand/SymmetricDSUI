@@ -25,7 +25,7 @@ scripts/status.sh  scripts/stop.sh  scripts/restore-db.sh  scripts/reset.sh
 ```
 All logic lives in `docker-compose.yml` (startup order) and `tools/` (runs inside a helper container), so the Windows `.bat`
 files and the Linux scripts are one-liners around `docker compose`.
-SQL Server is on `localhost:14330` (sa / `.env`). Read-only login for the Phase 2 UI: `monitor_ro`.
+SQL Server is on `localhost,14330` (sa / `.env`; SSMS settings: [docs/WINDOWS-DOCKER-DESKTOP.md](docs/WINDOWS-DOCKER-DESKTOP.md#5-connect-with-ssms--azure-data-studio)). Read-only login for the Phase 2 UI: `monitor_ro`.
 
 ## Verified (2026-10-15, clean build)
 | Test | Result |
