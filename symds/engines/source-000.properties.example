@@ -24,3 +24,7 @@ auto.registration=true
 job.routing.period.time.ms=2000
 job.push.period.time.ms=2000
 job.pull.period.time.ms=2000
+
+# keep non-Latin text (Japanese, Cyrillic, emoji ...) intact when it is captured on SQL Server.
+# Must be set before the sym_ tables are created (docker compose down -v / reset.bat to apply to an existing demo).
+mssql.use.ntypes.for.sync=true

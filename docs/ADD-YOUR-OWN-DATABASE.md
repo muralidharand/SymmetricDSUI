@@ -79,6 +79,11 @@ Your own tables and data are never dropped.
 | Functions that read other tables | allowed, with a warning that those tables must exist on the target |
 Order of creation: schemas → alias types → sequences → functions → tables. All statements are idempotent (skipped if the object already exists). Views, procedures, triggers, indexes and foreign keys are **not** copied.
 
+## 4c. Test it: Sync Tester
+Open **http://localhost:19090**, pick your sync, create or edit rows on the source and watch them arrive on the target ([docs/SYNC-TESTER.md](SYNC-TESTER.md)).
+
+**Unicode:** the wizard writes `mssql.use.ntypes.for.sync=true` into the engine files so nchar/nvarchar text (Japanese, Cyrillic, emoji) replicates intact. It only takes effect when the SymmetricDS tables are created: a sync created with an older version shows `?` on the target (the monitor raises an *unicode_capture* alert) – recreate the sync.
+
 ## 5. What changes in your databases
 * In **both** databases: ~45 `sym_*` tables and ~80 triggers named `SYM_ON_…` (SymmetricDS' own configuration, queue and capture).
 * On each replicated source table: three triggers (insert/update/delete) that record changes. Expect a little write overhead.

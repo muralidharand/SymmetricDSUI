@@ -30,6 +30,9 @@ function engineProps(pair, role) {
     role === 'src' ? 'registration.url=' : `registration.url=http://localhost:31415/sync/${n.src}`,
     `sync.url=http://${SYNC_HOST}:31415/sync/${n[role]}`,
     'auto.config.database=true',
+    // keep non-Latin text (Japanese, Cyrillic, emoji ...) intact: sym_data captures nvarchar data as ntext instead of varchar.
+    // Must be on BEFORE the sym_ tables are created, it does not repair an existing install.
+    'mssql.use.ntypes.for.sync=true',
     ...(role === 'src' ? ['auto.reload=true', 'auto.registration=true'] : []),
     'job.routing.period.time.ms=2000', 'job.push.period.time.ms=2000', 'job.pull.period.time.ms=2000',
   ];

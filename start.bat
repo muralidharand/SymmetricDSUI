@@ -12,6 +12,7 @@ if errorlevel 1 (
 docker compose run --rm tools wait-parity
 echo.
 echo Monitor UI : http://localhost:%MONITOR_PORT%   ^(sign in: user "admin", password = MONITOR_ADMIN_PASSWORD in .env^)
+echo Sync Tester: http://localhost:%TESTER_PORT%   ^(same sign-in; create/edit rows on the source and watch them arrive on the target^)
 echo SSMS       : server name  localhost,%MSSQL_PORT%   ^(comma^), SQL Server Authentication, login sa, password = MSSQL_SA_PASSWORD in .env,
 echo              Options - tick "Trust server certificate"
 start "" http://localhost:%MONITOR_PORT%

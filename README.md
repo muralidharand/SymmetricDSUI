@@ -52,6 +52,9 @@ SQL Server is on `localhost,14330` (sa / `.env`; SSMS settings: [docs/WINDOWS-DO
 12. **Single ordered channel `aw_data`** by design: separate channels (customer vs. orders) can arrive out of order across FKs.
 
 ---
+# Sync Tester (`tester/`)
+A second app on **http://localhost:19090** that generates create / list / edit pages for any table of a sync (pick source or target, schema, table) so you can test real-time replication. See [docs/SYNC-TESTER.md](docs/SYNC-TESTER.md).
+
 # Phase 2 — Monitoring UI (`monitor/`)
 Node 22 + Fastify API (`monitor/api`) and React/Vite/Recharts UI (`monitor/web`), served by one container on **http://localhost:18080**.
 It connects with the `monitor_ro` login (`db_datareader` only — it cannot modify anything) to both databases and reads the `sym_*` tables.

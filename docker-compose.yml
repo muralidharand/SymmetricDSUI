@@ -114,6 +114,24 @@ services:
       - monitor-data:/data                 # saved connections (passwords encrypted), sync pairs, audit log
       - runtime-engines:/runtime/engines   # engine files for sym-runtime
 
+  # Sync Tester: generated create / list / edit pages for any table, to watch source -> target replication live
+  tester:
+    build: ./tester
+    depends_on:
+      mssql-init: { condition: service_completed_successfully }
+    ports: ["${TESTER_BIND:-127.0.0.1}:${TESTER_PORT:-19090}:8080"]
+    restart: unless-stopped
+    environment:
+      MSSQL_HOST: mssql
+      DEMO_DB_USER: symds                  # writer login for the built-in demo databases
+      DEMO_DB_PASSWORD: ${SYMDS_DB_PASSWORD}
+      MONITOR_ADMIN_USER: ${MONITOR_ADMIN_USER:-admin}
+      MONITOR_ADMIN_PASSWORD: ${MONITOR_ADMIN_PASSWORD}
+      MONITOR_SECRET: ${MONITOR_SECRET:-}
+      MONITOR_DATA_DIR: /monitor-data
+    volumes:
+      - monitor-data:/monitor-data:ro      # connections / syncs saved by the monitor (read-only)
+
   # optional second SQL Server instance to try syncing between two servers: docker compose --profile extra-sql up -d mssql2
   mssql2:
     <<: *sqlserver

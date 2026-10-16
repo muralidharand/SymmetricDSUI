@@ -30,6 +30,7 @@ collide with common ones:
 | SymmetricDS source node | **41415** | `SYM_SOURCE_PORT` | 31415 |
 | SymmetricDS target node | **41416** | `SYM_TARGET_PORT` | 31416 |
 | Monitor UI | **18080** | `MONITOR_PORT` | 8080 |
+| Sync Tester | **19090** | `TESTER_PORT` | 8080 |
 
 `start.bat` checks these ports first and tells you which one is taken; change the number in `.env` and run again. The containers talk to
 each other on Docker's internal network, so these ports are only for you (SQL client, browser). The other thing to watch is **memory**:
@@ -154,7 +155,7 @@ Docker Desktop restarts the containers automatically after a reboot (SymmetricDS
 | `mssql` unhealthy or exits | Not enough memory: give Docker ≥ 6 GB (see prerequisites). Check `docker compose logs mssql` (password complexity?) |
 | `data\AdventureWorksLT2022.bak is missing` | Copy the file into the `data` folder |
 | `mssql-init` fails / restore error | `docker compose logs mssql-init`. Make sure the .bak is the full file (about 8.5 MB), not a partial download |
-| `port is already allocated` / start.bat says a port is in use | Edit `.env`, change the named port (`MSSQL_PORT`, `SYM_SOURCE_PORT`, `SYM_TARGET_PORT`, `MONITOR_PORT`), then `start.bat`. An existing `.env` keeps its old values: edit it, or delete it to get the new defaults |
+| `port is already allocated` / start.bat says a port is in use | Edit `.env`, change the named port (`MSSQL_PORT`, `SYM_SOURCE_PORT`, `SYM_TARGET_PORT`, `MONITOR_PORT`, `TESTER_PORT`), then `start.bat`. An existing `.env` keeps its old values: edit it, or delete it to get the new defaults |
 | Containers show *Exited* in Docker Desktop (SQL Server / sym-source / monitor stopped) | `docker compose ps -a`, then `docker compose logs mssql` (exit 137 = out of memory: raise Docker memory), `docker compose logs sym-source sym-config`. Then run `start.bat` again. `mssql-init` and `sym-config` showing *Exited (0)* is normal: they are one-shot jobs |
 | Monitor shows a red "Database not reachable" banner | SQL Server is stopped or still starting: run `start.bat`, wait a minute, the page recovers by itself. Old monitor versions crashed with `(c \|\| []).filter is not a function`: update the project and `docker compose build monitor` |
 | Drive/file sharing error mentioning the project path | Move the folder to `C:\symds` or under `C:\Users\<you>` |

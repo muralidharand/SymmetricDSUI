@@ -6,3 +6,7 @@ symds/engines/*.properties
 monitor/api/node_modules
 monitor/api/public
 monitor/web/dist
+tester/api/node_modules
+tester/api/public
+tester/web/dist
+tester/web/node_modules

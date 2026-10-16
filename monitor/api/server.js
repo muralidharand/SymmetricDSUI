@@ -164,6 +164,12 @@ app.get('/api/alerts', async (req) => {
   for (const m of ov.errors || []) alerts.push({ severity: 'critical', kind: 'monitor_query', message: 'Database read failed: ' + m });
   const errs = await inner(req, '/api/errors');
   for (const e of Array.isArray(errs.outgoing) ? errs.outgoing : []) alerts.push({ severity: 'critical', kind: 'batch_error', message: `Batch ${e.batch_id} (${e.channel_id}) → node ${e.node_id}: ${(e.sql_message || '').slice(0, 200)}` });
+  // non-Latin text is lost ('?') when SymmetricDS captured into varchar columns: only an install created with mssql.use.ntypes.for.sync can be trusted
+  const cap = await safe(() => q('source', `SELECT (SELECT t.name FROM sys.columns c JOIN sys.types t ON t.user_type_id = c.user_type_id WHERE c.object_id = OBJECT_ID('sym_data') AND c.name = 'row_data') AS capture_type,
+      (SELECT COUNT(*) FROM sym_trigger tr JOIN sys.tables tb ON tb.name = tr.source_table_name AND SCHEMA_NAME(tb.schema_id) = tr.source_schema_name
+         JOIN sys.columns c ON c.object_id = tb.object_id JOIN sys.types ty ON ty.user_type_id = c.user_type_id WHERE ty.name IN ('nchar', 'nvarchar', 'ntext')) AS unicode_cols`), [{}]);
+  if (cap[0]?.capture_type === 'varchar' && cap[0].unicode_cols > 0)
+    alerts.push({ severity: 'warning', kind: 'unicode_capture', message: `${cap[0].unicode_cols} synced column(s) hold Unicode text, but this sync captures changes as varchar: characters outside the database's code page (Japanese, Cyrillic, emoji...) arrive as "?". Recreate the sync (Sync jobs > Remove with uninstall > New sync; the demo: reset.bat then start.bat) so the setting mssql.use.ntypes.for.sync=true takes effect. Details: docs/ADD-YOUR-OWN-DATABASE.md` });
   if (ov.backlog > BACKLOG_WARN) alerts.push({ severity: 'warning', kind: 'backlog', message: `Backlog of ${ov.backlog} batches not yet loaded` });
   const par = await inner(req, '/api/parity');
   for (const t of Array.isArray(par?.tables) ? par.tables : []) if (!t.match && ov.backlog === 0) alerts.push({ severity: 'warning', kind: 'parity', message: `${t.table}: source ${t.source_rows} vs target ${t.target_rows} rows with no backlog` });

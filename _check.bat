@@ -24,12 +24,14 @@ set "MSSQL_PORT=14330"
 set "SYM_SOURCE_PORT=41415"
 set "SYM_TARGET_PORT=41416"
 set "MONITOR_PORT=18080"
+set "TESTER_PORT=19090"
 set "RUNTIME_PORT=41417"
 for /f "usebackq eol=# tokens=1,* delims==" %%a in (".env") do (
   if /i "%%a"=="MSSQL_PORT" set "MSSQL_PORT=%%b"
   if /i "%%a"=="SYM_SOURCE_PORT" set "SYM_SOURCE_PORT=%%b"
   if /i "%%a"=="SYM_TARGET_PORT" set "SYM_TARGET_PORT=%%b"
   if /i "%%a"=="MONITOR_PORT" set "MONITOR_PORT=%%b"
+  if /i "%%a"=="TESTER_PORT" set "TESTER_PORT=%%b"
   if /i "%%a"=="RUNTIME_PORT" set "RUNTIME_PORT=%%b"
 )
 if /i "%~1"=="bak" goto :bak
@@ -53,6 +55,7 @@ call :chk MSSQL_PORT %MSSQL_PORT%
 call :chk SYM_SOURCE_PORT %SYM_SOURCE_PORT%
 call :chk SYM_TARGET_PORT %SYM_TARGET_PORT%
 call :chk MONITOR_PORT %MONITOR_PORT%
+call :chk TESTER_PORT %TESTER_PORT%
 call :chk RUNTIME_PORT %RUNTIME_PORT%
 if defined BUSY (
   echo.
